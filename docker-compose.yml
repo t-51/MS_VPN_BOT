@@ -1,0 +1,14 @@
+services:
+  ms-vpn-bot:
+    build: .
+    container_name: ms_vpn_bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

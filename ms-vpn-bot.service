@@ -1,0 +1,15 @@
+[Unit]
+Description=MS VPN Telegram Bot Service (MHPanel Integration)
+After=network.target mhpanel.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bot/MS_VPN_BOT
+ExecStart=/root/bot/MS_VPN_BOT/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
