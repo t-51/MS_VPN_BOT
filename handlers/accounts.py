@@ -85,6 +85,18 @@ async def cb_view_account(callback: types.CallbackQuery):
     live_data = None
     if cat in ("singbox", "v2ray", "reality"):
         live_data = await panel_api.get_user_details(panel_user)
+        if account.get("is_trial") and live_data and live_data.get("success"):
+            u_info = live_data.get("user", {})
+            if u_info.get("is_expired") or u_info.get("is_quota_exceeded"):
+                from utils.trial_manager import delete_trial_from_panel
+                await delete_trial_from_panel(account)
+                await database.delete_account(account_id)
+                return await callback.message.edit_text(
+                    "⏳ <b>مهلت استفاده از این اکانت تستی به پایان رسیده است.</b>\n\n"
+                    "این اکانت جهت بهینه‌سازی منابع سرور به صورت خودکار از پنل حذف گردید.\n"
+                    "جهت تهیه اشتراک دائمی و پرسرعت، از بخش «🛒 خرید اشتراک» اقدام فرمایید.",
+                    parse_mode="HTML"
+                )
 
     text = format_account_details(account, live_data if (live_data and live_data.get("success")) else None, server_ip=srv_ip, psk=psk)
     sub_url = account.get("sub_url") or (live_data.get("sub_url") if live_data else "")

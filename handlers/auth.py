@@ -53,14 +53,15 @@ async def cmd_start(message: types.Message):
 
 
 from keyboards.inline import build_tutorials_main_keyboard, build_tutorial_back_keyboard
-from utils.tutorials import TUTORIALS
+from utils.tutorials import get_tutorial_text, get_all_client_downloads
 
 
 @router.message(Command("help"))
 @router.message(F.text == "❓ راهنمای اتصال")
 async def show_connection_help(message: types.Message):
+    text = await get_tutorial_text("main")
     await message.answer(
-        TUTORIALS["main"],
+        text,
         reply_markup=build_tutorials_main_keyboard(),
         parse_mode="HTML",
     )
@@ -68,8 +69,9 @@ async def show_connection_help(message: types.Message):
 
 @router.callback_query(F.data == "tut:main")
 async def cb_tut_main(callback: types.CallbackQuery):
+    text = await get_tutorial_text("main")
     await callback.message.edit_text(
-        TUTORIALS["main"],
+        text,
         reply_markup=build_tutorials_main_keyboard(),
         parse_mode="HTML",
     )
@@ -79,13 +81,16 @@ async def cb_tut_main(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("tut:view:"))
 async def cb_tut_view(callback: types.CallbackQuery):
     tut_key = callback.data.split(":")[2]
-    text = TUTORIALS.get(tut_key, TUTORIALS["main"])
+    text = await get_tutorial_text(tut_key)
+    dl_links = await get_all_client_downloads()
     await callback.message.edit_text(
         text,
-        reply_markup=build_tutorial_back_keyboard(tut_key),
+        reply_markup=build_tutorial_back_keyboard(tut_key, dl_links),
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
     await callback.answer()
+
 
 
 @router.callback_query(F.data == "tut:close")

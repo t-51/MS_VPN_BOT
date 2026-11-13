@@ -17,10 +17,12 @@ from keyboards.inline import (
     build_plans_keyboard,
     build_payment_methods_keyboard,
     account_details_keyboard,
+    trial_select_keyboard,
 )
 from keyboards.reply import main_menu_keyboard, cancel_keyboard
 from states.forms import ChargeCardStates, GASWizardStates
 from utils.helpers import to_toman, to_fa, api_error_text
+from utils import trial_manager
 
 router = Router(name="shop")
 router.message.filter(IsAuthorized())
@@ -39,7 +41,7 @@ REALITY_INBOUNDS = [
 
 
 # ──────────────────────────────────────────────────────────────
-#  اکانت تستی رایگان (قابل تنظیم توسط مدیر)
+#  اکانت تستی رایگان (پشتیبانی از کلیه پروتکل‌ها و پاکسازی خودکار)
 # ──────────────────────────────────────────────────────────────
 
 @router.message(F.text == "🎁 اکانت تستی")
@@ -66,62 +68,293 @@ async def request_free_trial(message: types.Message):
             reply_markup=main_menu_keyboard,
         )
 
+    trial_mode = await database.get_setting("trial_mode", "menu")
     trial_gb = float(await database.get_setting("trial_traffic_gb", str(settings.TRIAL_TRAFFIC_GB)))
     trial_days = int(await database.get_setting("trial_duration_days", str(settings.TRIAL_DURATION_DAYS)))
 
-    rand_suffix = secrets.token_hex(2)
-    panel_user = f"ms_t_{telegram_id}_{rand_suffix}"
+    if trial_mode == "direct_all":
+        # صدور مستقیم تمام حالت‌ها بدون نیاز به منوی انتخاب
+        return await _execute_trial_issuance(message, telegram_id, "all", trial_gb, trial_days)
 
-    wait_msg = await message.answer("⏳ در حال صدور اکانت تستی شما روی هسته MHPanel...")
-
-    res = await panel_api.create_user(
-        username=panel_user,
-        traffic_limit_gb=trial_gb,
-        validity_days=trial_days,
-        expiry_type="on_first_use",
-        category="MS_VPN_Trial",
-        note=f"Trial TG: {telegram_id} (@{message.from_user.username or ''})",
+    # نمایش منوی انتخاب حالت و پروتکل تست با اولویت پکیج کامل
+    prompt_text = (
+        "🎁 <b>دریافت اکانت تستی رایگان</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "کاربر گرامی، شما می‌توانید اکانت تستی خود را برای پروتکل دلخواه دریافت کنید یا گزینه <b>«پکیج جامع»</b> را انتخاب نمایید تا از <b>کلیه حالت‌ها و پروتکل‌ها به صورت یکجا</b> اکانت تست دریافت فرمایید:\n\n"
+        f"▫️ حجم ترافیک تست: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
+        f"▫️ مدت اعتبار تست: <b>{to_fa(trial_days)} روز</b> (پس از اولین اتصال)\n\n"
+        "👇 لطفاً حالت مورد نظر را انتخاب فرمایید:"
     )
+    await message.answer(prompt_text, reply_markup=trial_select_keyboard(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "trial:cancel")
+async def cb_trial_cancel(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("عملیات انصراف داده شد.")
+
+
+@router.callback_query(F.data.startswith("trial:mode:"))
+async def cb_trial_select_mode(callback: types.CallbackQuery):
+    telegram_id = callback.from_user.id
+    user = await database.get_user(telegram_id)
+    if not user:
+        user = await database.get_or_create_user(telegram_id, callback.from_user.username, callback.from_user.first_name)
+
+    is_enabled = (await database.get_setting("trial_enabled", "1")) == "1"
+    if not is_enabled:
+        return await callback.answer("توزیع تست در حال حاضر متوقف است.", show_alert=True)
+
+    if user.get("trial_used"):
+        return await callback.answer("شما قبلاً سهمیه اکانت تستی خود را دریافت کرده‌اید!", show_alert=True)
+
+    mode = callback.data.split(":")[2]
+    trial_gb = float(await database.get_setting("trial_traffic_gb", str(settings.TRIAL_TRAFFIC_GB)))
+    trial_days = int(await database.get_setting("trial_duration_days", str(settings.TRIAL_DURATION_DAYS)))
+
+    await callback.message.edit_text("⏳ <b>در حال صدور اکانت تستی شما روی سرور MHPanel...</b>\nلطفاً چند لحظه شکیبا باشید.", parse_mode="HTML")
+    await _execute_trial_issuance(callback.message, telegram_id, mode, trial_gb, trial_days, is_edit=True)
+    await callback.answer()
+
+
+async def _execute_trial_issuance(
+    msg: types.Message,
+    telegram_id: int,
+    mode: str,
+    trial_gb: float,
+    trial_days: int,
+    is_edit: bool = False
+):
+    """تابع اجرایی ساخت، ثبت و ارسال مشخصات اکانت تستی متناسب با پروتکل‌های انتخابی."""
+    wait_msg = None
+    if not is_edit:
+        wait_msg = await msg.answer("⏳ <b>در حال صدور اکانت تستی شما روی سرور MHPanel...</b>", parse_mode="HTML")
+
+    res = await trial_manager.issue_trial_by_mode(telegram_id, mode, trial_gb, trial_days)
 
     if not res.get("success"):
-        await wait_msg.delete()
-        return await message.answer(
-            f"❌ متأسفانه در ساخت اکانت تستی خطایی رخ داد:\n{api_error_text(res)}",
-            reply_markup=main_menu_keyboard,
+        err_msg = f"❌ متأسفانه در ساخت اکانت تستی خطایی رخ داد:\n{res.get('error', 'خطای ناشناخته')}"
+        if wait_msg:
+            try:
+                await wait_msg.delete()
+            except Exception:
+                pass
+        if is_edit:
+            return await msg.edit_text(err_msg, reply_markup=main_menu_keyboard)
+        return await msg.answer(err_msg, reply_markup=main_menu_keyboard)
+
+    await database.set_trial_used(telegram_id)
+
+    # ── ۱. پکیج کامل از تمامی حالت‌ها ──
+    if mode == "all":
+        sb = res.get("singbox", {})
+        sys_acc = res.get("system_l2tp", {})
+        wg = res.get("wireguard", {})
+        dns = res.get("dnstt", {})
+
+        kb = InlineKeyboardBuilder()
+        if sys_acc.get("account_id"):
+            kb.button(text="📥 دانلود فایل OpenVPN (.ovpn)", callback_data=f"acc:dl_ovpn:{sys_acc['account_id']}")
+        kb.adjust(1)
+
+        summary_text = (
+            "🎉 <b>پکیج کامل اکانت‌های تستی شما با موفقیت صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📶 ترافیک هدیه هر پروتکل: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
+            f"⏱ مدت اعتبار تست: <b>{to_fa(trial_days)} روز</b> (پس از اولین اتصال)\n\n"
+            "🚀 <b>۱. کانفیگ‌های هوشمند Sing-box و V2Ray:</b>\n"
+            f"🔗 ساب هوشمند:\n<code>{sb.get('sub_url', '')}</code>\n\n"
+            f"📡 ساب Base64:\n<code>{sb.get('sub_b64_url', '')}</code>\n\n"
+            "🛡️ <b>۲. پروتکل‌های سیستمی و استاندارد:</b>\n"
+            f"👤 یوزرنیم: <code>{sys_acc.get('username', '')}</code>\n"
+            f"🔑 پسورد: <code>{sys_acc.get('password', '')}</code>\n"
+            f"🌐 سرور: <code>{sys_acc.get('server_ip', '')}</code> | کلید PSK: <code>{sys_acc.get('psk', '')}</code>\n"
+            f"▫️ سیسکو AnyConnect: پورت <code>10443</code>\n"
+            f"▫️ اوپن وی‌پی‌ان: پورت <code>1194</code> (دانلود از دکمه زیر)\n\n"
+            "⚡ <b>۳. وایرگارد مدرن (WireGuard):</b>\n"
+            f"👤 کاربر: <code>{wg.get('username', '')}</code> | آی‌پی: <code>{wg.get('client_ip', '')}</code>\n"
+            "▫️ فایل کانفیگ و بارکد QR در پیام‌های زیر ارسال شد.\n\n"
+            "🌐 <b>۴. تانل ضد فیلتر DNS (SlowDNS / SlipNet):</b>\n"
+            f"👤 کاربر: <code>{dns.get('username', '')}</code> | رمز: <code>{dns.get('password', '')}</code>\n"
+            f"📡 دامنه: <code>{dns.get('domain', '')}</code>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 <i>کلیه اکانت‌های تستی فوق پس از پایان مهلت تست، به صورت کاملاً خودکار از پنل سرور حذف خواهند شد تا فضا و منابع اشغال نشوند.</i>"
         )
 
-    created_u = res.get("user", {})
-    sub_token = created_u.get("sub_token", "")
-    sub_url = created_u.get("sub_url", f"{settings.PANEL_SUB_URL}/{sub_token}")
-    sub_b64 = created_u.get("sub_b64_url", f"{sub_url}/b64")
+        if is_edit:
+            await msg.edit_text(summary_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(summary_text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
-    await database.save_account(
-        telegram_id=telegram_id,
-        panel_username=panel_user,
-        category="singbox",
-        plan_name="اکانت تستی رایگان",
-        sub_token=sub_token,
-        sub_url=sub_url,
-        sub_b64_url=sub_b64,
-        is_trial=1,
-        traffic_gb=trial_gb,
-        duration_days=trial_days,
-    )
-    await database.set_trial_used(telegram_id)
-    await wait_msg.delete()
+        # ارسال فایل و QR وایرگارد در پکیج کامل
+        wg_conf = wg.get("config", "")
+        wg_user = wg.get("username", "")
+        if wg_conf:
+            try:
+                conf_doc = BufferedInputFile(wg_conf.encode("utf-8"), filename=f"MS_Trial_WG_{wg_user}.conf")
+                await msg.answer_document(conf_doc, caption=f"📁 فایل کانفیگ تستی وایرگارد: <code>{wg_user}</code>", parse_mode="HTML")
+            except Exception:
+                pass
+            try:
+                qr = qrcode.QRCode(box_size=8, border=3)
+                qr.add_data(wg_conf)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                bio = io.BytesIO()
+                img.save(bio, format="PNG")
+                bio.seek(0)
+                qr_photo = BufferedInputFile(bio.getvalue(), filename=f"trial_wg_{wg_user}.png")
+                await msg.answer_photo(qr_photo, caption="📷 بارکد اختصاصی وایرگارد جهت اسکن در موبایل")
+            except Exception:
+                pass
 
-    success_text = (
-        "🎉 <b>اکانت تستی رایگان شما با موفقیت صادر شد!</b>\n\n"
-        f"👤 نام کاربری در پنل: <code>{panel_user}</code>\n"
-        f"📶 ترافیک هدیه: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
-        f"⏱ مدت اعتبار: <b>{to_fa(trial_days)} روز</b> (آغاز پس از اولین اتصال)\n\n"
-        "🔗 <b>لینک هوشمند سابسکریپشن:</b>\n"
-        f"<code>{sub_url}</code>\n\n"
-        "📡 <b>لینک ساب Base64 (سازگار با تمامی کلاینت‌ها):</b>\n"
-        f"<code>{sub_b64}</code>\n\n"
-        "💡 جهت اتصال، لینک بالا را در نرم‌افزارهای SlipNet یا v2rayNG وارد فرمایید."
-    )
-    await message.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+    # ── ۲. حالت فقط Sing-box و V2Ray ──
+    elif mode == "singbox":
+        success_text = (
+            "🎉 <b>اکانت تستی Sing-box و V2Ray با موفقیت صادر شد!</b>\n\n"
+            f"👤 نام کاربری در پنل: <code>{res['username']}</code>\n"
+            f"📶 ترافیک هدیه: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
+            f"⏱ مدت اعتبار: <b>{to_fa(trial_days)} روز</b> (پس از اولین اتصال)\n\n"
+            "🔗 <b>لینک هوشمند سابسکریپشن:</b>\n"
+            f"<code>{res['sub_url']}</code>\n\n"
+            "📡 <b>لینک ساب Base64 (سازگار با تمامی کلاینت‌ها):</b>\n"
+            f"<code>{res['sub_b64_url']}</code>\n\n"
+            "💡 جهت اتصال، لینک بالا را در نرم‌افزارهای SlipNet، v2rayNG یا Sing-box وارد فرمایید.\n"
+            "⚠️ <i>این اکانت تستی پس از پایان اعتبار به صورت خودکار از پنل حذف خواهد شد.</i>"
+        )
+        if is_edit:
+            await msg.edit_text(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+
+    # ── ۳. حالت پروتکل‌های سیستمی (Cisco / OpenVPN / L2TP) ──
+    elif mode == "system_l2tp":
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📥 دانلود فایل OpenVPN (.ovpn)", callback_data=f"acc:dl_ovpn:{res['account_id']}")
+        kb.adjust(1)
+        success_text = (
+            "🎉 <b>اکانت تستی پروتکل‌های سیستمی و استاندارد صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>نام کاربری (Username):</b> <code>{res['username']}</code>\n"
+            f"🔑 <b>رمز عبور (Password):</b> <code>{res['password']}</code>\n"
+            f"🌐 <b>آدرس سرور:</b> <code>{res['server_ip']}</code>\n\n"
+            "⚡ <b>قابل استفاده به طور همزمان در:</b>\n"
+            f"▫️ <b>Cisco AnyConnect:</b> سرور <code>{res['server_ip']}:10443</code>\n"
+            f"▫️ <b>OpenVPN:</b> پورت <code>1194</code> (دانلود .ovpn از دکمه زیر)\n"
+            f"▫️ <b>L2TP / IPsec:</b> سرور <code>{res['server_ip']}</code> | کلید (PSK): <code>{res['psk']}</code>\n"
+            f"▫️ <b>IKEv2:</b> سرور <code>{res['server_ip']}</code>\n\n"
+            "⚠️ <i>این اکانت تستی پس از پایان مهلت تست، به صورت خودکار از پنل حذف خواهد شد.</i>"
+        )
+        if is_edit:
+            await msg.edit_text(success_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(success_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+    # ── ۴. حالت پروتکل اختصاصی وایرگارد ──
+    elif mode == "wireguard":
+        success_text = (
+            "🎉 <b>اکانت تستی اختصاصی وایرگارد (WireGuard) صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 نام کاربری: <code>{res['username']}</code>\n"
+            f"🌐 آی‌پی کلاینت: <code>{res['client_ip']}</code>\n"
+            f"📶 حجم ترافیک هدیه: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
+            f"⏱ مدت اعتبار: <b>{to_fa(trial_days)} روز</b>\n\n"
+            "⚡ فایل کانفیگ و بارکد QR اختصاصی در پیام‌های زیر ارسال شد.\n"
+            "⚠️ <i>این اکانت تستی پس از پایان مهلت تست، به صورت خودکار از پنل حذف خواهد شد.</i>"
+        )
+        if is_edit:
+            await msg.edit_text(success_text, parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(success_text, parse_mode="HTML")
+
+        wg_conf = res.get("config", "")
+        wg_user = res.get("username", "")
+        if wg_conf:
+            try:
+                conf_doc = BufferedInputFile(wg_conf.encode("utf-8"), filename=f"MS_WireGuard_{wg_user}.conf")
+                await msg.answer_document(conf_doc, caption=f"📁 فایل کانفیگ وایرگارد: <code>{wg_user}</code>", parse_mode="HTML")
+            except Exception:
+                pass
+            try:
+                qr = qrcode.QRCode(box_size=8, border=3)
+                qr.add_data(wg_conf)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                bio = io.BytesIO()
+                img.save(bio, format="PNG")
+                bio.seek(0)
+                qr_photo = BufferedInputFile(bio.getvalue(), filename=f"wg_qr_{wg_user}.png")
+                await msg.answer_photo(qr_photo, caption="📷 بارکد اختصاصی WireGuard جهت اسکن مستقیم")
+            except Exception:
+                pass
+
+    # ── ۵. حالت تانل DNS (SlowDNS / SlipNet) ──
+    elif mode == "dnstt":
+        all_uris = res.get("uris", {})
+        cfg_blocks = []
+        for p_key, p_info in all_uris.items():
+            lbl = p_info.get("label", p_key.upper())
+            uri = p_info.get("uri", "")
+            cfg_blocks.append(f"⚡ <b>{lbl}:</b>\n<code>{uri}</code>")
+        all_cfgs_text = "\n\n".join(cfg_blocks)
+
+        success_text = (
+            "🎉 <b>اکانت تستی تانل ضد فیلتر DNS (SlowDNS / SlipNet) صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>نام کاربری:</b> <code>{res['username']}</code>\n"
+            f"🔑 <b>رمز عبور:</b> <code>{res['password']}</code>\n"
+            f"📡 <b>دامنه سرور DNS:</b> <code>{res['domain']}</code>\n"
+            f"🔑 <b>کلید عمومی:</b>\n<code>{res['pubkey']}</code>\n\n"
+            "📋 <b>کانفیگ‌های کلاینت SlipNet:</b>\n\n"
+            f"{all_cfgs_text}\n\n"
+            "⚠️ <i>این اکانت تستی پس از پایان مهلت تست، به صورت خودکار از پنل حذف خواهد شد.</i>"
+        )
+        if is_edit:
+            await msg.edit_text(success_text, parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(success_text, parse_mode="HTML")
+
+        # ارسال بارکد QR کانفیگ اول
+        primary_uri = all_uris.get("vaydns", {}).get("uri") or all_uris.get("dnstt", {}).get("uri") or ""
+        if primary_uri:
+            try:
+                qr = qrcode.QRCode(box_size=8, border=3)
+                qr.add_data(primary_uri)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                bio = io.BytesIO()
+                img.save(bio, format="PNG")
+                bio.seek(0)
+                qr_photo = BufferedInputFile(bio.getvalue(), filename=f"slipnet_qr_{res['username']}.png")
+                await msg.answer_photo(qr_photo, caption=f"📷 بارکد اتصال سریع به تانل DNS (کلاینت SlipNet)")
+            except Exception:
+                pass
+
 
 
 # ──────────────────────────────────────────────────────────────

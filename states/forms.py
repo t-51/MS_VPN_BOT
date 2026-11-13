@@ -75,3 +75,10 @@ class AdminUserStates(StatesGroup):
 # ── پنل مدیریت: افزودن مدیر جدید ─────────────────────────────
 class AdminManageStates(StatesGroup):
     waiting_new_admin_id = State()
+
+
+# ── پنل مدیریت: ویرایش آموزش‌ها و دانلود نرم‌افزارها ──────────
+class AdminTutorialStates(StatesGroup):
+    waiting_tutorial_text = State()
+    waiting_download_url = State()
+

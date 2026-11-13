@@ -1,5 +1,8 @@
 """محتوا و راهنماهای آموزشی اتصال به تفکیک سیستم‌عامل و پروتکل."""
+from typing import Dict, Any, Optional
 from config import settings
+from db import database
+
 
 # لینک‌های دانلود کلاینت‌ها
 CLIENT_DOWNLOADS = {
@@ -341,3 +344,151 @@ PROTO_APP_GUIDES = {
         "می‌توانید کدهای کانفیگ SOCKS5 و HTTP ارسال‌شده توسط ربات را در نرم‌افزارهای v2rayNG و v2rayN وارد کنید."
     ),
 }
+
+# ──────────────────────────────────────────────────────────────
+#  عناوین و توابع داینامیک ویرایش و مدیریت آموزش‌ها و دانلودها
+# ──────────────────────────────────────────────────────────────
+
+TUTORIAL_TITLES: Dict[str, str] = {
+    "main": "📋 پیام اصلی منوی آموزش‌ها",
+    "android": "📱 راهنمای اندروید (Android)",
+    "ios": "🍏 راهنمای آیفون و آیپد (iOS)",
+    "windows": "💻 راهنمای ویندوز (Windows PC)",
+    "wireguard": "⚡ راهنمای وایرگارد (WireGuard)",
+    "cisco": "🛡️ راهنمای Cisco AnyConnect",
+    "openvpn": "🔒 راهنمای OpenVPN",
+    "gas": "☁️ راهنمای گوگل اسکریپت (GAS)",
+    "ssh": "⚡ راهنمای SSH Tunnel",
+    "slowdns": "🌐 راهنمای تانل SlowDNS",
+}
+
+CLIENT_DOWNLOAD_TITLES: Dict[str, str] = {
+    "v2rayng_google_play": "v2rayNG اندروید (Google Play)",
+    "v2rayng_github": "v2rayNG مستقیم APK (GitHub)",
+    "slipnet_android": "SlipNet اندروید (Google Play)",
+    "singbox_android": "Sing-box اندروید (Google Play)",
+    "cisco_android": "Cisco AnyConnect اندروید (Google Play)",
+    "openvpn_android": "OpenVPN اندروید (Google Play)",
+    "slowdns_android": "SlowDNS اندروید",
+    "streisand_ios": "Streisand آیفون (App Store)",
+    "v2box_ios": "V2Box آیفون و مک (App Store)",
+    "singbox_ios": "Sing-box آیفون (App Store)",
+    "foxray_ios": "FoXray آیفون (App Store)",
+    "cisco_ios": "Cisco AnyConnect آیفون (App Store)",
+    "openvpn_ios": "OpenVPN آیفون (App Store)",
+    "v2rayn_windows": "v2rayN ویندوز (GitHub)",
+    "nekoray_windows": "NekoRay ویندوز (GitHub)",
+    "cisco_windows": "Cisco AnyConnect ویندوز",
+    "openvpn_windows": "OpenVPN ویندوز",
+    "wireguard_android": "WireGuard اندروید (Google Play)",
+    "wireguard_ios": "WireGuard آیفون (App Store)",
+    "wireguard_windows": "WireGuard ویندوز (.exe)",
+    "wireguard_macos": "WireGuard مک (App Store)",
+    "wireguard_linux": "WireGuard لینوکس",
+    "goose_github": "Goose VPN (GitHub)",
+    "singbox_desktop": "Sing-box دسکتاپ (GitHub)",
+}
+
+
+async def get_tutorial_text(key: str) -> str:
+    """دریافت متن آموزش (از دیتابیس در صورت ویرایش توسط ادمین، یا مقدار پیش‌فرض)."""
+    custom = await database.get_setting(f"tut_text_{key}")
+    if custom and custom.strip():
+        return custom
+    return TUTORIALS.get(key, "")
+
+
+async def set_tutorial_text(key: str, text: str) -> None:
+    """ذخیره متن ویرایش‌شده آموزش در دیتابیس."""
+    await database.set_setting(f"tut_text_{key}", text.strip())
+
+
+async def reset_tutorial_text(key: str) -> None:
+    """بازنشانی متن آموزش به مقدار پیش‌فرض فایل."""
+    await database.delete_setting(f"tut_text_{key}")
+
+
+async def is_tutorial_customized(key: str) -> bool:
+    """بررسی اینکه آیا آموزش توسط ادمین سفارشی‌سازی شده است یا خیر."""
+    val = await database.get_setting(f"tut_text_{key}")
+    return bool(val and val.strip())
+
+
+async def get_download_url(key: str) -> str:
+    """دریافت لینک دانلود نرم‌افزار (از دیتابیس یا مقدار پیش‌فرض)."""
+    custom = await database.get_setting(f"dl_url_{key}")
+    if custom and custom.strip():
+        return custom
+    return CLIENT_DOWNLOADS.get(key, "")
+
+
+async def set_download_url(key: str, url: str) -> None:
+    """ذخیره لینک دانلود جدید در دیتابیس."""
+    await database.set_setting(f"dl_url_{key}", url.strip())
+
+
+async def reset_download_url(key: str) -> None:
+    """بازنشانی لینک دانلود به پیش‌فرض سیستم."""
+    await database.delete_setting(f"dl_url_{key}")
+
+
+async def is_download_customized(key: str) -> bool:
+    """بررسی اینکه آیا لینک دانلود سفارشی‌سازی شده است."""
+    val = await database.get_setting(f"dl_url_{key}")
+    return bool(val and val.strip())
+
+
+async def get_all_client_downloads() -> Dict[str, str]:
+    """دریافت کلیه لینک‌های دانلود مؤثر (ترکیب پیش‌فرض و مقادیر سفارشی ذخیره شده در دیتابیس)."""
+    res = dict(CLIENT_DOWNLOADS)
+    for k in CLIENT_DOWNLOADS:
+        custom = await database.get_setting(f"dl_url_{k}")
+        if custom and custom.strip():
+            res[k] = custom.strip()
+    return res
+
+
+async def get_app_center_main_text() -> str:
+    custom = await database.get_setting("app_center_main_text")
+    if custom and custom.strip():
+        return custom
+    return APP_CENTER_MAIN_TEXT
+
+
+async def set_app_center_main_text(text: str) -> None:
+    await database.set_setting("app_center_main_text", text.strip())
+
+
+async def reset_app_center_main_text() -> None:
+    await database.delete_setting("app_center_main_text")
+
+
+async def get_os_guide_text(os_key: str) -> str:
+    custom = await database.get_setting(f"os_guide_{os_key}")
+    if custom and custom.strip():
+        return custom
+    return OS_APP_GUIDES.get(os_key, "")
+
+
+async def set_os_guide_text(os_key: str, text: str) -> None:
+    await database.set_setting(f"os_guide_{os_key}", text.strip())
+
+
+async def reset_os_guide_text(os_key: str) -> None:
+    await database.delete_setting(f"os_guide_{os_key}")
+
+
+async def get_proto_guide_text(proto_key: str) -> str:
+    custom = await database.get_setting(f"proto_guide_{proto_key}")
+    if custom and custom.strip():
+        return custom
+    return PROTO_APP_GUIDES.get(proto_key, "")
+
+
+async def set_proto_guide_text(proto_key: str, text: str) -> None:
+    await database.set_setting(f"proto_guide_{proto_key}", text.strip())
+
+
+async def reset_proto_guide_text(proto_key: str) -> None:
+    await database.delete_setting(f"proto_guide_{proto_key}")
+

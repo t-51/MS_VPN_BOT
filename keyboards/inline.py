@@ -1,5 +1,5 @@
 """کیبوردهای شیشه‌ای (Inline) کاربر و پنل مدیریت MS_VPN_BOT."""
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 
 from aiogram.types import (
     InlineKeyboardMarkup,
@@ -213,43 +213,44 @@ def build_tutorials_main_keyboard() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def build_tutorial_back_keyboard(tut_key: str = "") -> InlineKeyboardMarkup:
+def build_tutorial_back_keyboard(tut_key: str = "", dl_links: Optional[Dict[str, str]] = None) -> InlineKeyboardMarkup:
     from utils.tutorials import CLIENT_DOWNLOADS
+    dls = dl_links or CLIENT_DOWNLOADS
     kb = InlineKeyboardBuilder()
 
     if tut_key == "android":
-        kb.button(text="📥 دانلود v2rayNG", url=CLIENT_DOWNLOADS["v2rayng_google_play"])
-        kb.button(text="📥 دانلود WireGuard", url=CLIENT_DOWNLOADS["wireguard_android"])
-        kb.button(text="📥 دانلود سیسکو (Google Play)", url=CLIENT_DOWNLOADS["cisco_android"])
-        kb.button(text="📥 دانلود OpenVPN (Google Play)", url=CLIENT_DOWNLOADS["openvpn_android"])
+        kb.button(text="📥 دانلود v2rayNG", url=dls.get("v2rayng_google_play", CLIENT_DOWNLOADS["v2rayng_google_play"]))
+        kb.button(text="📥 دانلود WireGuard", url=dls.get("wireguard_android", CLIENT_DOWNLOADS["wireguard_android"]))
+        kb.button(text="📥 دانلود سیسکو (Google Play)", url=dls.get("cisco_android", CLIENT_DOWNLOADS["cisco_android"]))
+        kb.button(text="📥 دانلود OpenVPN (Google Play)", url=dls.get("openvpn_android", CLIENT_DOWNLOADS["openvpn_android"]))
     elif tut_key == "ios":
-        kb.button(text="📥 دانلود Streisand (App Store)", url=CLIENT_DOWNLOADS["streisand_ios"])
-        kb.button(text="📥 دانلود WireGuard (App Store)", url=CLIENT_DOWNLOADS["wireguard_ios"])
-        kb.button(text="📥 دانلود V2Box (App Store)", url=CLIENT_DOWNLOADS["v2box_ios"])
-        kb.button(text="📥 دانلود سیسکو (App Store)", url=CLIENT_DOWNLOADS["cisco_ios"])
-        kb.button(text="📥 دانلود OpenVPN (App Store)", url=CLIENT_DOWNLOADS["openvpn_ios"])
+        kb.button(text="📥 دانلود Streisand (App Store)", url=dls.get("streisand_ios", CLIENT_DOWNLOADS["streisand_ios"]))
+        kb.button(text="📥 دانلود WireGuard (App Store)", url=dls.get("wireguard_ios", CLIENT_DOWNLOADS["wireguard_ios"]))
+        kb.button(text="📥 دانلود V2Box (App Store)", url=dls.get("v2box_ios", CLIENT_DOWNLOADS["v2box_ios"]))
+        kb.button(text="📥 دانلود سیسکو (App Store)", url=dls.get("cisco_ios", CLIENT_DOWNLOADS["cisco_ios"]))
+        kb.button(text="📥 دانلود OpenVPN (App Store)", url=dls.get("openvpn_ios", CLIENT_DOWNLOADS["openvpn_ios"]))
     elif tut_key == "windows":
-        kb.button(text="📥 دانلود v2rayN", url=CLIENT_DOWNLOADS["v2rayn_windows"])
-        kb.button(text="📥 دانلود WireGuard ویندوز", url=CLIENT_DOWNLOADS["wireguard_windows"])
-        kb.button(text="📥 دانلود سیسکو ویندوز", url=CLIENT_DOWNLOADS["cisco_windows"])
-        kb.button(text="📥 دانلود OpenVPN ویندوز", url=CLIENT_DOWNLOADS["openvpn_windows"])
+        kb.button(text="📥 دانلود v2rayN", url=dls.get("v2rayn_windows", CLIENT_DOWNLOADS["v2rayn_windows"]))
+        kb.button(text="📥 دانلود WireGuard ویندوز", url=dls.get("wireguard_windows", CLIENT_DOWNLOADS["wireguard_windows"]))
+        kb.button(text="📥 دانلود سیسکو ویندوز", url=dls.get("cisco_windows", CLIENT_DOWNLOADS["cisco_windows"]))
+        kb.button(text="📥 دانلود OpenVPN ویندوز", url=dls.get("openvpn_windows", CLIENT_DOWNLOADS["openvpn_windows"]))
     elif tut_key == "wireguard":
-        kb.button(text="📥 WireGuard اندروید", url=CLIENT_DOWNLOADS["wireguard_android"])
-        kb.button(text="📥 WireGuard آیفون", url=CLIENT_DOWNLOADS["wireguard_ios"])
-        kb.button(text="📥 WireGuard ویندوز", url=CLIENT_DOWNLOADS["wireguard_windows"])
-        kb.button(text="📥 WireGuard مک", url=CLIENT_DOWNLOADS["wireguard_macos"])
+        kb.button(text="📥 WireGuard اندروید", url=dls.get("wireguard_android", CLIENT_DOWNLOADS["wireguard_android"]))
+        kb.button(text="📥 WireGuard آیفون", url=dls.get("wireguard_ios", CLIENT_DOWNLOADS["wireguard_ios"]))
+        kb.button(text="📥 WireGuard ویندوز", url=dls.get("wireguard_windows", CLIENT_DOWNLOADS["wireguard_windows"]))
+        kb.button(text="📥 WireGuard مک", url=dls.get("wireguard_macos", CLIENT_DOWNLOADS["wireguard_macos"]))
     elif tut_key == "gas":
-        kb.button(text="🌐 Google OAuth Playground", url=CLIENT_DOWNLOADS["google_oauth_playground"])
-        kb.button(text="☁️ Cloudflare API Tokens", url=CLIENT_DOWNLOADS["cloudflare_dash"])
-        kb.button(text="📥 کلاینت Goose VPN", url=CLIENT_DOWNLOADS["goose_github"])
+        kb.button(text="🌐 Google OAuth Playground", url=dls.get("google_oauth_playground", CLIENT_DOWNLOADS["google_oauth_playground"]))
+        kb.button(text="☁️ Cloudflare API Tokens", url=dls.get("cloudflare_dash", CLIENT_DOWNLOADS["cloudflare_dash"]))
+        kb.button(text="📥 کلاینت Goose VPN", url=dls.get("goose_github", CLIENT_DOWNLOADS["goose_github"]))
     elif tut_key == "cisco":
-        kb.button(text="📥 سیسکو اندروید", url=CLIENT_DOWNLOADS["cisco_android"])
-        kb.button(text="📥 سیسکو آیفون", url=CLIENT_DOWNLOADS["cisco_ios"])
-        kb.button(text="📥 سیسکو ویندوز", url=CLIENT_DOWNLOADS["cisco_windows"])
+        kb.button(text="📥 سیسکو اندروید", url=dls.get("cisco_android", CLIENT_DOWNLOADS["cisco_android"]))
+        kb.button(text="📥 سیسکو آیفون", url=dls.get("cisco_ios", CLIENT_DOWNLOADS["cisco_ios"]))
+        kb.button(text="📥 سیسکو ویندوز", url=dls.get("cisco_windows", CLIENT_DOWNLOADS["cisco_windows"]))
     elif tut_key == "openvpn":
-        kb.button(text="📥 OpenVPN اندروید", url=CLIENT_DOWNLOADS["openvpn_android"])
-        kb.button(text="📥 OpenVPN آیفون", url=CLIENT_DOWNLOADS["openvpn_ios"])
-        kb.button(text="📥 OpenVPN ویندوز", url=CLIENT_DOWNLOADS["openvpn_windows"])
+        kb.button(text="📥 OpenVPN اندروید", url=dls.get("openvpn_android", CLIENT_DOWNLOADS["openvpn_android"]))
+        kb.button(text="📥 OpenVPN آیفون", url=dls.get("openvpn_ios", CLIENT_DOWNLOADS["openvpn_ios"]))
+        kb.button(text="📥 OpenVPN ویندوز", url=dls.get("openvpn_windows", CLIENT_DOWNLOADS["openvpn_windows"]))
 
     kb.button(text="🔙 بازگشت به منوی آموزش‌ها", callback_data="tut:main")
     kb.adjust(2)
@@ -282,72 +283,77 @@ def build_apps_center_keyboard() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def build_apps_os_detail_keyboard(os_key: str) -> InlineKeyboardMarkup:
+def build_apps_os_detail_keyboard(os_key: str, dl_links: Optional[Dict[str, str]] = None) -> InlineKeyboardMarkup:
     """کیبورد دکمه‌های دانلود مستقیم برای یک سیستم‌عامل خاص."""
     from utils.tutorials import CLIENT_DOWNLOADS
+    dls = dl_links or CLIENT_DOWNLOADS
     kb = InlineKeyboardBuilder()
 
     if os_key == "android":
-        kb.button(text="📥 دانلود v2rayNG (گوگل‌پلی)", url=CLIENT_DOWNLOADS["v2rayng_google_play"])
-        kb.button(text="📦 دانلود مستقیم APK (گیت‌هاب)", url=CLIENT_DOWNLOADS["v2rayng_github"])
-        kb.button(text="⚡ دانلود WireGuard اندروید", url=CLIENT_DOWNLOADS["wireguard_android"])
-        kb.button(text="🛡️ دانلود سیسکو AnyConnect", url=CLIENT_DOWNLOADS["cisco_android"])
-        kb.button(text="🔒 دانلود OpenVPN Connect", url=CLIENT_DOWNLOADS["openvpn_android"])
-        kb.button(text="🌐 دانلود SlowDNS", url=CLIENT_DOWNLOADS["slowdns_android"])
+        kb.button(text="📥 دانلود v2rayNG (گوگل‌پلی)", url=dls.get("v2rayng_google_play", CLIENT_DOWNLOADS["v2rayng_google_play"]))
+        kb.button(text="📦 دانلود مستقیم APK (گیت‌هاب)", url=dls.get("v2rayng_github", CLIENT_DOWNLOADS["v2rayng_github"]))
+        kb.button(text="⚡ دانلود WireGuard اندروید", url=dls.get("wireguard_android", CLIENT_DOWNLOADS["wireguard_android"]))
+        kb.button(text="🛡️ دانلود سیسکو AnyConnect", url=dls.get("cisco_android", CLIENT_DOWNLOADS["cisco_android"]))
+        kb.button(text="🔒 دانلود OpenVPN Connect", url=dls.get("openvpn_android", CLIENT_DOWNLOADS["openvpn_android"]))
+        kb.button(text="🌐 دانلود SlowDNS", url=dls.get("slowdns_android", CLIENT_DOWNLOADS["slowdns_android"]))
     elif os_key == "ios":
-        kb.button(text="🌟 دانلود Streisand (اپ‌استور)", url=CLIENT_DOWNLOADS["streisand_ios"])
-        kb.button(text="📱 دانلود V2Box (اپ‌استور)", url=CLIENT_DOWNLOADS["v2box_ios"])
-        kb.button(text="⚡ دانلود WireGuard (اپ‌استور)", url=CLIENT_DOWNLOADS["wireguard_ios"])
-        kb.button(text="🦊 دانلود FoXray (اپ‌استور)", url=CLIENT_DOWNLOADS["foxray_ios"])
-        kb.button(text="🛡️ دانلود سیسکو Secure Client", url=CLIENT_DOWNLOADS["cisco_ios"])
-        kb.button(text="🔒 دانلود OpenVPN iOS", url=CLIENT_DOWNLOADS["openvpn_ios"])
+        kb.button(text="🌟 دانلود Streisand (اپ‌استور)", url=dls.get("streisand_ios", CLIENT_DOWNLOADS["streisand_ios"]))
+        kb.button(text="📱 دانلود V2Box (اپ‌استور)", url=dls.get("v2box_ios", CLIENT_DOWNLOADS["v2box_ios"]))
+        kb.button(text="⚡ دانلود WireGuard (اپ‌استور)", url=dls.get("wireguard_ios", CLIENT_DOWNLOADS["wireguard_ios"]))
+        kb.button(text="🦊 دانلود FoXray (اپ‌استور)", url=dls.get("foxray_ios", CLIENT_DOWNLOADS["foxray_ios"]))
+        kb.button(text="🛡️ دانلود سیسکو Secure Client", url=dls.get("cisco_ios", CLIENT_DOWNLOADS["cisco_ios"]))
+        kb.button(text="🔒 دانلود OpenVPN iOS", url=dls.get("openvpn_ios", CLIENT_DOWNLOADS["openvpn_ios"]))
     elif os_key == "windows":
-        kb.button(text="🌟 دانلود نرم‌افزار v2rayN", url=CLIENT_DOWNLOADS["v2rayn_windows"])
-        kb.button(text="⚡ دانلود نصاب WireGuard ویندوز", url=CLIENT_DOWNLOADS["wireguard_windows"])
-        kb.button(text="🛡️ دانلود سیسکو AnyConnect ویندوز", url=CLIENT_DOWNLOADS["cisco_windows"])
-        kb.button(text="🔒 دانلود OpenVPN ویندوز", url=CLIENT_DOWNLOADS["openvpn_windows"])
+        kb.button(text="🌟 دانلود نرم‌افزار v2rayN", url=dls.get("v2rayn_windows", CLIENT_DOWNLOADS["v2rayn_windows"]))
+        kb.button(text="⚡ دانلود نصاب WireGuard ویندوز", url=dls.get("wireguard_windows", CLIENT_DOWNLOADS["wireguard_windows"]))
+        kb.button(text="🛡️ دانلود سیسکو AnyConnect ویندوز", url=dls.get("cisco_windows", CLIENT_DOWNLOADS["cisco_windows"]))
+        kb.button(text="🔒 دانلود OpenVPN ویندوز", url=dls.get("openvpn_windows", CLIENT_DOWNLOADS["openvpn_windows"]))
     elif os_key == "macos":
-        kb.button(text="📱 دانلود V2Box مک", url=CLIENT_DOWNLOADS["v2box_ios"])
-        kb.button(text="⚡ دانلود WireGuard مک", url=CLIENT_DOWNLOADS["wireguard_macos"])
-        kb.button(text="🚀 باینری دسکتاپ Sing-box", url=CLIENT_DOWNLOADS["singbox_desktop"])
+        kb.button(text="📱 دانلود V2Box مک", url=dls.get("v2box_ios", CLIENT_DOWNLOADS["v2box_ios"]))
+        kb.button(text="⚡ دانلود WireGuard مک", url=dls.get("wireguard_macos", CLIENT_DOWNLOADS["wireguard_macos"]))
+        kb.button(text="🚀 باینری دسکتاپ Sing-box", url=dls.get("singbox_desktop", CLIENT_DOWNLOADS["singbox_desktop"]))
     elif os_key == "linux":
-        kb.button(text="🌐 راهنمای رسمی WireGuard Linux", url=CLIENT_DOWNLOADS["wireguard_linux"])
-        kb.button(text="🚀 دانلود هسته Sing-box Linux", url=CLIENT_DOWNLOADS["singbox_desktop"])
+        kb.button(text="🌐 راهنمای رسمی WireGuard Linux", url=dls.get("wireguard_linux", CLIENT_DOWNLOADS["wireguard_linux"]))
+        kb.button(text="🚀 دانلود هسته Sing-box Linux", url=dls.get("singbox_desktop", CLIENT_DOWNLOADS["singbox_desktop"]))
 
     kb.button(text="🔙 بازگشت به مرکز دانلود", callback_data="app:center")
     kb.adjust(2)
     return kb.as_markup()
 
 
-def build_apps_proto_detail_keyboard(proto_key: str) -> InlineKeyboardMarkup:
+def build_apps_proto_detail_keyboard(proto_key: str, dl_links: Optional[Dict[str, str]] = None) -> InlineKeyboardMarkup:
     """کیبورد دکمه‌های مستقیم دانلود برای یک پروتکل خاص."""
     from utils.tutorials import CLIENT_DOWNLOADS
+    dls = dl_links or CLIENT_DOWNLOADS
     kb = InlineKeyboardBuilder()
 
     if proto_key == "singbox":
-        kb.button(text="📥 v2rayNG اندروید", url=CLIENT_DOWNLOADS["v2rayng_google_play"])
-        kb.button(text="📥 Streisand آیفون", url=CLIENT_DOWNLOADS["streisand_ios"])
-        kb.button(text="📥 v2rayN ویندوز", url=CLIENT_DOWNLOADS["v2rayn_windows"])
-        kb.button(text="📥 V2Box مک", url=CLIENT_DOWNLOADS["v2box_ios"])
+        kb.button(text="📥 v2rayNG اندروید", url=dls.get("v2rayng_google_play", CLIENT_DOWNLOADS["v2rayng_google_play"]))
+        kb.button(text="📥 Streisand آیفون", url=dls.get("streisand_ios", CLIENT_DOWNLOADS["streisand_ios"]))
+        kb.button(text="📥 v2rayN ویندوز", url=dls.get("v2rayn_windows", CLIENT_DOWNLOADS["v2rayn_windows"]))
+        kb.button(text="📥 V2Box مک", url=dls.get("v2box_ios", CLIENT_DOWNLOADS["v2box_ios"]))
     elif proto_key == "wireguard":
-        kb.button(text="📥 WireGuard اندروید", url=CLIENT_DOWNLOADS["wireguard_android"])
-        kb.button(text="📥 WireGuard آیفون", url=CLIENT_DOWNLOADS["wireguard_ios"])
-        kb.button(text="📥 WireGuard ویندوز", url=CLIENT_DOWNLOADS["wireguard_windows"])
-        kb.button(text="📥 WireGuard مک", url=CLIENT_DOWNLOADS["wireguard_macos"])
+        kb.button(text="📥 WireGuard اندروید", url=dls.get("wireguard_android", CLIENT_DOWNLOADS["wireguard_android"]))
+        kb.button(text="📥 WireGuard آیفون", url=dls.get("wireguard_ios", CLIENT_DOWNLOADS["wireguard_ios"]))
+        kb.button(text="📥 WireGuard ویندوز", url=dls.get("wireguard_windows", CLIENT_DOWNLOADS["wireguard_windows"]))
+        kb.button(text="📥 WireGuard مک", url=dls.get("wireguard_macos", CLIENT_DOWNLOADS["wireguard_macos"]))
     elif proto_key == "standard":
-        kb.button(text="🛡️ سیسکو اندروید", url=CLIENT_DOWNLOADS["cisco_android"])
-        kb.button(text="🛡️ سیسکو آیفون", url=CLIENT_DOWNLOADS["cisco_ios"])
-        kb.button(text="🔒 OpenVPN اندروید", url=CLIENT_DOWNLOADS["openvpn_android"])
-        kb.button(text="🔒 OpenVPN آیفون", url=CLIENT_DOWNLOADS["openvpn_ios"])
+        kb.button(text="🛡️ سیسکو اندروید", url=dls.get("cisco_android", CLIENT_DOWNLOADS["cisco_android"]))
+        kb.button(text="🛡️ سیسکو آیفون", url=dls.get("cisco_ios", CLIENT_DOWNLOADS["cisco_ios"]))
+        kb.button(text="🔒 OpenVPN اندروید", url=dls.get("openvpn_android", CLIENT_DOWNLOADS["openvpn_android"]))
+        kb.button(text="🔒 OpenVPN آیفون", url=dls.get("openvpn_ios", CLIENT_DOWNLOADS["openvpn_ios"]))
     elif proto_key == "dnstt":
-        kb.button(text="📥 دانلود SlowDNS اندروید", url=CLIENT_DOWNLOADS["slowdns_android"])
-        kb.button(text="📥 دانلود HTTP Custom", url=CLIENT_DOWNLOADS["http_custom_android"])
+        kb.button(text="📥 دانلود SlowDNS اندروید", url=dls.get("slowdns_android", CLIENT_DOWNLOADS["slowdns_android"]))
+        kb.button(text="📥 دانلود HTTP Custom", url=dls.get("http_custom_android", CLIENT_DOWNLOADS["http_custom_android"]))
     elif proto_key == "gas":
-        kb.button(text="🌐 Google OAuth Playground", url=CLIENT_DOWNLOADS["google_oauth_playground"])
-        kb.button(text="☁️ پنل توکن‌های Cloudflare", url=CLIENT_DOWNLOADS["cloudflare_dash"])
-        kb.button(text="📥 کلاینت Goose VPN (گیت‌هاب)", url=CLIENT_DOWNLOADS["goose_github"])
+        kb.button(text="🌐 Google OAuth Playground", url=dls.get("google_oauth_playground", CLIENT_DOWNLOADS["google_oauth_playground"]))
+        kb.button(text="☁️ پنل توکن‌های Cloudflare", url=dls.get("cloudflare_dash", CLIENT_DOWNLOADS["cloudflare_dash"]))
+        kb.button(text="📥 کلاینت Goose VPN (گیت‌هاب)", url=dls.get("goose_github", CLIENT_DOWNLOADS["goose_github"]))
 
     kb.button(text="🔙 بازگشت به مرکز دانلود", callback_data="app:center")
+    kb.adjust(2)
+    return kb.as_markup()
+
     kb.adjust(2)
     return kb.as_markup()
 
@@ -434,10 +440,12 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     kb.button(text="📢 ارسال اعلان و پیام همگانی", callback_data="adm:broadcast")
     kb.button(text="🎁 تنظیمات اکانت تست", callback_data="adm:trial")
     kb.button(text="👥 مدیریت رفرال و پورسانت", callback_data="adm:referral")
+    kb.button(text="📚 مدیریت و ویرایش آموزش‌ها", callback_data="adm:tutorials")
+    kb.button(text="📲 مدیریت لینک‌های دانلود نرم‌افزار", callback_data="adm:downloads")
     kb.button(text="🎫 پاسخ به تیکت‌های کاربران", callback_data="adm:tickets")
     kb.button(text="🔄 تست اتصال زنده MHPanel", callback_data="adm:test_panel")
     kb.button(text="❌ بستن پنل مدیریت", callback_data="adm:close")
-    kb.adjust(1, 2, 2, 2, 2, 2, 1, 1)
+    kb.adjust(1, 2, 2, 2, 2, 2, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -655,17 +663,36 @@ def admin_plan_detail_keyboard(plan_id: int, cat_key: str, is_active: bool) -> I
     return kb.as_markup()
 
 
-# ── سایر کیبوردهای مدیریت ────────────────────────────────────
+# ── سایر کیبوردهای مدیریت و تست ──────────────────────────────
 
-def admin_trial_keyboard(is_enabled: bool) -> InlineKeyboardMarkup:
+def trial_select_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد انتخاب نوع یا پروتکل اکانت تستی برای کاربر."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🌟 پکیج جامع (تست کلیه پروتکل‌ها به صورت یکجا)", callback_data="trial:mode:all")
+    kb.button(text="🚀 ۱. کانفیگ‌های Sing-box و V2Ray", callback_data="trial:mode:singbox")
+    kb.button(text="🛡️ ۲. سیسکو، اوپن‌وی‌پی‌ان و L2TP", callback_data="trial:mode:system_l2tp")
+    kb.button(text="⚡ ۳. وایرگارد مدرن (WireGuard)", callback_data="trial:mode:wireguard")
+    kb.button(text="🌐 ۴. تانل ضد فیلتر DNS (SlipNet)", callback_data="trial:mode:dnstt")
+    kb.button(text="❌ انصراف و بازگشت", callback_data="trial:cancel")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_trial_keyboard(is_enabled: bool, trial_mode: str = "menu") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     toggle_txt = "🔴 غیرفعال‌سازی تست رایگان" if is_enabled else "🟢 فعال‌سازی تست رایگان"
     kb.button(text=toggle_txt, callback_data="adm:trial:toggle")
     kb.button(text="📶 تغییر حجم اکانت تست", callback_data="adm:trial:set_gb")
     kb.button(text="⏱ تغییر مدت روز اعتبار", callback_data="adm:trial:set_days")
+    
+    mode_lbl = "🌟 نحوه صدور: منوی انتخاب + پکیج کامل" if trial_mode == "menu" else "⚡ نحوه صدور: صدور مستقیم همه حالت‌ها"
+    kb.button(text=mode_lbl, callback_data="adm:trial:toggle_mode")
+    kb.button(text="🗑 پاکسازی دستی تست‌های منقضی شده از پنل", callback_data="adm:trial:cleanup")
+    
     kb.button(text="🔙 بازگشت به مدیریت", callback_data="adm:main")
     kb.adjust(1)
     return kb.as_markup()
+
 
 
 def admin_referral_keyboard() -> InlineKeyboardMarkup:
@@ -698,3 +725,50 @@ def admin_ticket_keyboard(ticket_id: int) -> InlineKeyboardMarkup:
     kb.button(text="🔙 بازگشت به تیکت‌ها", callback_data="adm:tickets")
     kb.adjust(2, 1)
     return kb.as_markup()
+
+
+# ── کیبوردهای مدیریت آموزش‌ها و دانلودها ─────────────────────
+
+def admin_tutorials_list_keyboard() -> InlineKeyboardMarkup:
+    """لیست کل آموزش‌ها جهت انتخاب برای ویرایش توسط مدیر."""
+    from utils.tutorials import TUTORIAL_TITLES
+    kb = InlineKeyboardBuilder()
+    for k, title in TUTORIAL_TITLES.items():
+        kb.button(text=title, callback_data=f"adm:tut_view:{k}")
+    kb.button(text="🔙 بازگشت به منوی مدیریت", callback_data="adm:main")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_tutorial_detail_keyboard(tut_key: str, is_custom: bool) -> InlineKeyboardMarkup:
+    """عملیات روی یک آموزش خاص."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✏️ ویرایش متن آموزش", callback_data=f"adm:tut_edit:{tut_key}")
+    if is_custom:
+        kb.button(text="🔄 بازنشانی به متن پیش‌فرض", callback_data=f"adm:tut_reset:{tut_key}")
+    kb.button(text="🔙 بازگشت به لیست آموزش‌ها", callback_data="adm:tutorials")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_downloads_list_keyboard() -> InlineKeyboardMarkup:
+    """لیست نرم‌افزارها جهت تغییر لینک دانلود توسط مدیر."""
+    from utils.tutorials import CLIENT_DOWNLOAD_TITLES
+    kb = InlineKeyboardBuilder()
+    for k, title in CLIENT_DOWNLOAD_TITLES.items():
+        kb.button(text=title, callback_data=f"adm:dl_view:{k}")
+    kb.button(text="🔙 بازگشت به منوی مدیریت", callback_data="adm:main")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_download_detail_keyboard(dl_key: str, is_custom: bool) -> InlineKeyboardMarkup:
+    """عملیات روی یک لینک دانلود نرم‌افزار."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✏️ تغییر لینک دانلود", callback_data=f"adm:dl_edit:{dl_key}")
+    if is_custom:
+        kb.button(text="🔄 بازنشانی به لینک پیش‌فرض", callback_data=f"adm:dl_reset:{dl_key}")
+    kb.button(text="🔙 بازگشت به لیست نرم‌افزارها", callback_data="adm:downloads")
+    kb.adjust(1)
+    return kb.as_markup()
+

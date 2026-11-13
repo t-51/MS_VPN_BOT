@@ -19,6 +19,24 @@ logging.basicConfig(
 logger = logging.getLogger("MS_VPN_BOT")
 
 
+async def trial_cleanup_background_loop(bot: Bot):
+    """حلقه پس‌زمینه پاکسازی خودکار اکانت‌های تستی منقضی شده از پنل MHPanel و دیتابیس."""
+    from utils.trial_manager import check_and_cleanup_expired_trials
+    logger.info("حلقه پس‌زمینه پاکسازی خودکار اکانت‌های تستی فعال شد.")
+    while True:
+        try:
+            # هر ۵ دقیقه یک‌بار اجرا می‌شود
+            await asyncio.sleep(300)
+            cleaned = await check_and_cleanup_expired_trials(bot)
+            if cleaned > 0:
+                logger.info(f"🧹 تسک پس‌زمینه: {cleaned} اکانت تستی منقضی شده از پنل با موفقیت حذف گردید.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"خطا در حلقه پاکسازی خودکار اکانت‌های تستی: {e}")
+            await asyncio.sleep(60)
+
+
 async def main():
     # مقداردهی اولیه‌ی دیتابیس محلی
     await database.init_db()
@@ -47,7 +65,25 @@ async def main():
     
     # حذف پیام‌های آپدیت انباشته شده قبل از اجرا
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+
+    # پاکسازی اولیه اکانت‌های تستی منقضی در زمان شروع ربات
+    try:
+        from utils.trial_manager import check_and_cleanup_expired_trials
+        init_cleaned = await check_and_cleanup_expired_trials(bot)
+        if init_cleaned > 0:
+            logger.info(f"🧹 پاکسازی اولیه: {init_cleaned} اکانت تستی منقضی شده از پنل حذف شد.")
+    except Exception as e:
+        logger.error(f"خطا در پاکسازی اولیه تست‌ها: {e}")
+
+    # اجرای تسک پس‌زمینه پاکسازی خودکار دوره‌ای
+    cleanup_task = asyncio.create_task(trial_cleanup_background_loop(bot))
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        cleanup_task.cancel()
+        await bot.session.close()
+
 
 
 if __name__ == "__main__":

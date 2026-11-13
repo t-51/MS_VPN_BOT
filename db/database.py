@@ -448,6 +448,14 @@ async def set_setting(key: str, value: str) -> None:
         await db.commit()
 
 
+async def delete_setting(key: str) -> None:
+    """حذف یک کلید از تنظیمات جهت بازنشانی به مقادیر پیش‌فرض."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute("DELETE FROM settings WHERE key = ?", (key,))
+        await db.commit()
+
+
+
 # ──────────────────────────────────────────────────────────────
 #  کاربران
 # ──────────────────────────────────────────────────────────────
@@ -1107,3 +1115,20 @@ async def get_user_transactions(telegram_id: int, limit: int = 20) -> List[Dict[
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
+
+async def get_all_trial_accounts() -> List[Dict[str, Any]]:
+    """دریافت کلیه اکانت‌های تستی فعال در سیستم."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM accounts WHERE is_trial = 1") as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def reset_user_trial(telegram_id: int) -> None:
+    """بازنشانی وضعیت سهمیه تست کاربر (جهت امکان دریافت مجدد تست)."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute("UPDATE users SET trial_used = 0 WHERE telegram_id = ?", (telegram_id,))
+        await db.commit()
+

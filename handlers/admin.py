@@ -48,8 +48,25 @@ from keyboards.inline import (
     admin_users_menu_keyboard,
     admin_user_card_keyboard,
     admin_manage_admins_keyboard,
+    admin_tutorials_list_keyboard,
+    admin_tutorial_detail_keyboard,
+    admin_downloads_list_keyboard,
+    admin_download_detail_keyboard,
 )
 from keyboards.reply import cancel_keyboard, get_main_keyboard
+from utils import trial_manager
+from utils.tutorials import (
+    TUTORIAL_TITLES,
+    CLIENT_DOWNLOAD_TITLES,
+    get_tutorial_text,
+    set_tutorial_text,
+    reset_tutorial_text,
+    is_tutorial_customized,
+    get_download_url,
+    set_download_url,
+    reset_download_url,
+    is_download_customized,
+)
 from states.forms import (
     AdminActionStates,
     AdminCategoryStates,
@@ -58,6 +75,7 @@ from states.forms import (
     AdminCardStates,
     AdminUserStates,
     AdminManageStates,
+    AdminTutorialStates,
 )
 from utils.formatters import (
     format_sales_stats,
@@ -826,18 +844,24 @@ async def cb_admin_trial_menu(callback: types.CallbackQuery):
     is_en = (await database.get_setting("trial_enabled", "1")) == "1"
     gb = await database.get_setting("trial_traffic_gb", str(settings.TRIAL_TRAFFIC_GB))
     days = await database.get_setting("trial_duration_days", str(settings.TRIAL_DURATION_DAYS))
+    trial_mode = await database.get_setting("trial_mode", "menu")
 
     state_str = "🟢 فعال (کاربران می‌توانند تست بگیرند)" if is_en else "🔴 غیرفعال (توزیع تست متوقف شده)"
+    mode_str = "📋 منوی انتخابی + پکیج کامل" if trial_mode == "menu" else "⚡ صدور مستقیم همه حالت‌ها بدون منو"
+
+    active_trials = await database.get_all_trial_accounts()
 
     text = (
         "🎁 <b>مدیریت و تنظیمات اکانت تستی رایگان</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"▫️ وضعیت فعلی: <b>{state_str}</b>\n"
         f"▫️ حجم اکانت تست: <b>{to_fa(gb)} گیگابایت</b>\n"
-        f"▫️ مدت اعتبار تست: <b>{to_fa(days)} روز</b> (پس از اولین اتصال)\n\n"
-        "جهت تغییر هر مورد، دکمه مربوطه را لمس کنید:"
+        f"▫️ مدت اعتبار تست: <b>{to_fa(days)} روز</b> (پس از اولین اتصال)\n"
+        f"▫️ نحوه توزیع تست: <b>{mode_str}</b>\n"
+        f"▫️ اکانت‌های تست فعال در سیستم: <b>{to_fa(len(active_trials))} اکانت</b>\n\n"
+        "💡 <i>اکانت‌های تستی پس از پایان اعتبار یا مصرف حجم، به صورت خودکار از پنل MHPanel حذف می‌گردند تا فضا اشغال نشود.</i>"
     )
-    await callback.message.edit_text(text, reply_markup=admin_trial_keyboard(is_en), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=admin_trial_keyboard(is_en, trial_mode), parse_mode="HTML")
     await callback.answer()
 
 
@@ -848,6 +872,24 @@ async def cb_admin_trial_toggle(callback: types.CallbackQuery):
     await database.set_setting("trial_enabled", new_state)
     await callback.answer("وضعیت تغییر یافت.")
     await cb_admin_trial_menu(callback)
+
+
+@router.callback_query(F.data == "adm:trial:toggle_mode")
+async def cb_admin_trial_toggle_mode(callback: types.CallbackQuery):
+    cur_mode = await database.get_setting("trial_mode", "menu")
+    new_mode = "direct_all" if cur_mode == "menu" else "menu"
+    await database.set_setting("trial_mode", new_mode)
+    await callback.answer("نحوه توزیع تست تغییر یافت.")
+    await cb_admin_trial_menu(callback)
+
+
+@router.callback_query(F.data == "adm:trial:cleanup")
+async def cb_admin_trial_cleanup(callback: types.CallbackQuery):
+    await callback.answer("⏳ در حال استعلام و پاکسازی تست‌های منقضی شده از پنل...")
+    count = await trial_manager.check_and_cleanup_expired_trials(callback.bot)
+    await callback.answer(f"✅ پاکسازی انجام شد: {count} اکانت منقضی شده از پنل حذف گردید.", show_alert=True)
+    await cb_admin_trial_menu(callback)
+
 
 
 @router.callback_query(F.data == "adm:trial:set_gb")
@@ -1973,3 +2015,213 @@ async def cb_admin_del(callback: types.CallbackQuery):
 
     admins = await database.get_all_admins()
     await callback.message.edit_reply_markup(reply_markup=admin_manage_admins_keyboard(admins, settings.ADMIN_IDS))
+
+
+# ──────────────────────────────────────────────────────────────
+#  مدیریت و ویرایش آموزش‌ها (Tutorials Management)
+# ──────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm:tutorials")
+async def cb_admin_tutorials_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    await state.clear()
+    text = (
+        "📚 <b>مدیریت و ویرایش آموزش‌ها و راهنماهای اتصال</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "در این بخش می‌توانید متن هر یک از آموزش‌های ربات (اندروید، آیفون، ویندوز، وایرگارد، سیسکو و...) "
+        "را به دلخواه خود ویرایش فرمایید یا به متن پیش‌فرض بازگردانید.\n\n"
+        "👇 لطفاً آموزش مورد نظر جهت ویرایش را انتخاب فرمایید:"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_tutorials_list_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:tut_view:"))
+async def cb_admin_tut_view(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    if state:
+        await state.clear()
+    tut_key = callback.data.split(":")[2]
+    title = TUTORIAL_TITLES.get(tut_key, tut_key)
+    current_text = await get_tutorial_text(tut_key)
+    is_custom = await is_tutorial_customized(tut_key)
+    status_str = "🟡 سفارشی (ویرایش‌شده توسط مدیر)" if is_custom else "🟢 پیش‌فرض سیستم"
+
+    preview = (
+        f"📚 <b>آموزش: {title}</b>\n"
+        f"▫️ وضعیت فعلی: <b>{status_str}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📝 <b>متن فعلی آموزش:</b>\n\n"
+        f"{current_text}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👇 جهت ویرایش یا بازنشانی، از دکمه‌های زیر استفاده فرمایید:"
+    )
+    await callback.message.edit_text(
+        preview,
+        reply_markup=admin_tutorial_detail_keyboard(tut_key, is_custom),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:tut_edit:"))
+async def cb_admin_tut_edit(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    tut_key = callback.data.split(":")[2]
+    title = TUTORIAL_TITLES.get(tut_key, tut_key)
+    await state.set_state(AdminTutorialStates.waiting_tutorial_text)
+    await state.update_data(target_tut_key=tut_key)
+    await callback.message.answer(
+        f"✏️ <b>ویرایش آموزش: {title}</b>\n\n"
+        "لطفاً متن جدید آموزش را ارسال فرمایید.\n"
+        "💡 می‌توانید از تگ‌های HTML مانند <code>&lt;b&gt;</code>، <code>&lt;code&gt;</code> و <code>&lt;a href='...'&gt;</code> استفاده فرمایید.",
+        reply_markup=cancel_keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminTutorialStates.waiting_tutorial_text)
+async def state_save_tutorial_text(message: types.Message, state: FSMContext):
+    if not _is_admin(message):
+        return
+    text = (message.text or message.caption or "").strip()
+    if text == "❌ لغو":
+        await state.clear()
+        return await message.answer("❌ عملیات ویرایش آموزش لغو شد.", reply_markup=get_main_keyboard(True))
+
+    data = await state.get_data()
+    tut_key = data.get("target_tut_key")
+    if not tut_key:
+        await state.clear()
+        return await message.answer("خطا در بازیابی کلید آموزش.", reply_markup=get_main_keyboard(True))
+
+    await set_tutorial_text(tut_key, text)
+    title = TUTORIAL_TITLES.get(tut_key, tut_key)
+    await state.clear()
+    await message.answer(
+        f"✅ <b>متن آموزش «{title}» با موفقیت ذخیره و به‌روزرسانی شد!</b>\n\n"
+        "از هم‌اکنون تمامی کاربران متن جدید را در بخش راهنما مشاهده خواهند کرد.",
+        reply_markup=get_main_keyboard(True),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("adm:tut_reset:"))
+async def cb_admin_tut_reset(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    tut_key = callback.data.split(":")[2]
+    await reset_tutorial_text(tut_key)
+    await callback.answer("✅ متن آموزش به حالت پیش‌فرض بازنشانی شد.", show_alert=True)
+    await cb_admin_tut_view(callback, None)
+
+
+# ──────────────────────────────────────────────────────────────
+#  مدیریت دانلود نرم‌افزارها (App Downloads Management)
+# ──────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm:downloads")
+async def cb_admin_downloads_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    await state.clear()
+    text = (
+        "📲 <b>مدیریت لینک‌های دانلود نرم‌افزارها</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "در این بخش می‌توانید لینک دانلود مستقیم هر یک از کلاینت‌ها (اندروید، iOS، ویندوز و...) "
+        "را تغییر داده و لینک‌های دلخواه، کانال تلگرام یا هاست اختصاصی خود را جایگزین فرمایید.\n\n"
+        "👇 لطفاً نرم‌افزار مورد نظر را انتخاب فرمایید:"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_downloads_list_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:dl_view:"))
+async def cb_admin_dl_view(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    if state:
+        await state.clear()
+    dl_key = callback.data.split(":")[2]
+    title = CLIENT_DOWNLOAD_TITLES.get(dl_key, dl_key)
+    current_url = await get_download_url(dl_key)
+    is_custom = await is_download_customized(dl_key)
+    status_str = "🟡 سفارشی (ویرایش‌شده توسط مدیر)" if is_custom else "🟢 پیش‌فرض رسمی"
+
+    text = (
+        f"📲 <b>نرم‌افزار: {title}</b>\n"
+        f"▫️ وضعیت: <b>{status_str}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🔗 <b>لینک فعلی دانلود:</b>\n"
+        f"<code>{current_url}</code>\n\n"
+        "جهت تغییر این لینک، دکمه «✏️ تغییر لینک دانلود» را لمس کنید:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_download_detail_keyboard(dl_key, is_custom),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:dl_edit:"))
+async def cb_admin_dl_edit(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    dl_key = callback.data.split(":")[2]
+    title = CLIENT_DOWNLOAD_TITLES.get(dl_key, dl_key)
+    await state.set_state(AdminTutorialStates.waiting_download_url)
+    await state.update_data(target_dl_key=dl_key)
+    await callback.message.answer(
+        f"✏️ <b>تغییر لینک دانلود: {title}</b>\n\n"
+        "لطفاً لینک جدید را ارسال فرمایید (حتماً با <code>https://</code> یا <code>http://</code> یا <code>tg://</code> شروع شود):",
+        reply_markup=cancel_keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminTutorialStates.waiting_download_url)
+async def state_save_download_url(message: types.Message, state: FSMContext):
+    if not _is_admin(message):
+        return
+    text = (message.text or "").strip()
+    if text == "❌ لغو":
+        await state.clear()
+        return await message.answer("❌ عملیات تغییر لینک لغو شد.", reply_markup=get_main_keyboard(True))
+
+    if not (text.startswith("http://") or text.startswith("https://") or text.startswith("tg://")):
+        return await message.answer("❌ لینک نامعتبر است! لطفاً لینکی ارسال فرمایید که با https:// شروع شود:")
+
+    data = await state.get_data()
+    dl_key = data.get("target_dl_key")
+    if not dl_key:
+        await state.clear()
+        return await message.answer("خطا در بازیابی کلید نرم‌افزار.", reply_markup=get_main_keyboard(True))
+
+    await set_download_url(dl_key, text)
+    title = CLIENT_DOWNLOAD_TITLES.get(dl_key, dl_key)
+    await state.clear()
+    await message.answer(
+        f"✅ <b>لینک دانلود «{title}» با موفقیت به‌روزرسانی شد!</b>\n\n"
+        f"🔗 لینک جدید: <code>{text}</code>",
+        reply_markup=get_main_keyboard(True),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("adm:dl_reset:"))
+async def cb_admin_dl_reset(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    dl_key = callback.data.split(":")[2]
+    await reset_download_url(dl_key)
+    await callback.answer("✅ لینک دانلود به حالت پیش‌فرض بازنشانی شد.", show_alert=True)
+    await cb_admin_dl_view(callback, None)
+
