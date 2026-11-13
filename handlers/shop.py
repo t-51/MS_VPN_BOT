@@ -141,7 +141,11 @@ async def _execute_trial_issuance(
             except Exception:
                 pass
         if is_edit:
-            return await msg.edit_text(err_msg, reply_markup=main_menu_keyboard)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            return await msg.answer(err_msg, reply_markup=main_menu_keyboard)
         return await msg.answer(err_msg, reply_markup=main_menu_keyboard)
 
     await database.set_trial_used(telegram_id)
@@ -236,7 +240,11 @@ async def _execute_trial_issuance(
             "⚠️ <i>این اکانت تستی پس از پایان اعتبار به صورت خودکار از پنل حذف خواهد شد.</i>"
         )
         if is_edit:
-            await msg.edit_text(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+            await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
         else:
             if wait_msg:
                 try:
