@@ -23,6 +23,7 @@ from keyboards.reply import main_menu_keyboard, cancel_keyboard
 from states.forms import ChargeCardStates, GASWizardStates
 from utils.helpers import to_toman, to_fa, api_error_text
 from utils import trial_manager
+from utils import notifier
 
 router = Router(name="shop")
 router.message.filter(IsAuthorized())
@@ -144,6 +145,13 @@ async def _execute_trial_issuance(
         return await msg.answer(err_msg, reply_markup=main_menu_keyboard)
 
     await database.set_trial_used(telegram_id)
+
+    # ارسال اعلان لحظه‌ای صدور تست به مدیران در صورت فعال بودن
+    try:
+        user_obj = await database.get_user(telegram_id)
+        await notifier.notify_admin_trial(msg.bot, telegram_id, user_obj, mode, trial_gb, trial_days, res)
+    except Exception:
+        pass
 
     # ── ۱. پکیج کامل از تمامی حالت‌ها ──
     if mode == "all":
@@ -525,6 +533,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 duration_days=plan.get("duration_days"),
             )
 
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="V2Ray اختصاصی",
+                panel_username=panel_user,
+                price=price,
+            )
+
             success_text = (
                 "🎉 <b>اشتراک اختصاصی V2Ray با موفقیت صادر شد!</b>\n\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
@@ -573,6 +591,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 duration_days=plan.get("duration_days"),
             )
 
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="VLESS Reality اختصاصی",
+                panel_username=panel_user,
+                price=price,
+            )
+
             success_text = (
                 "🎉 <b>اشتراک اختصاصی VLESS Reality صادر شد!</b>\n\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
@@ -607,6 +635,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
+            )
+
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="پروتکل‌های سیستمی (Cisco / L2TP)",
+                panel_username=panel_user,
+                price=price,
             )
 
             success_text = (
@@ -658,6 +696,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
+            )
+
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="تانل ضد فیلتر DNS",
+                panel_username=panel_user,
+                price=price,
             )
 
             # استخراج فوری تمامی کانفیگ‌های تانل DNS و SlipNet
@@ -766,6 +814,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 duration_days=plan.get("duration_days"),
             )
 
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="وایرگارد مدرن (WireGuard)",
+                panel_username=panel_user,
+                price=price,
+            )
+
             success_text = (
                 "🎉 <b>اشتراک اختصاصی وایرگارد (WireGuard) با موفقیت صادر شد!</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
@@ -868,6 +926,16 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 duration_days=plan.get("duration_days"),
             )
 
+            await notifier.notify_admin_purchase(
+                bot=callback.bot,
+                telegram_id=telegram_id,
+                user=callback.from_user,
+                plan=plan,
+                category_title="Sing-box VIP هوشمند",
+                panel_username=panel_user,
+                price=price,
+            )
+
             success_text = (
                 "🎉 <b>خرید شما با موفقیت انجام شد و اشتراک تحویل گردید!</b>\n\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
@@ -940,6 +1008,16 @@ async def cb_gas_instant_delivery(callback: types.CallbackQuery):
         is_trial=0,
         traffic_gb=plan.get("traffic_gb", 0) if plan else 0,
         duration_days=plan.get("duration_days", 30) if plan else 30,
+    )
+
+    await notifier.notify_admin_purchase(
+        bot=callback.bot,
+        telegram_id=telegram_id,
+        user=callback.from_user,
+        plan=plan or {"name": "اشتراک ابری GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
+        category_title="گوگل اسکریپت ابری (GAS تحویل فوری)",
+        panel_username=panel_user,
+        price=plan.get("price", 0) if plan else 0,
     )
 
     success_text = (
@@ -1097,6 +1175,16 @@ async def _finalize_gas_deployment(message_or_target: types.Message, state: FSMC
         is_trial=0,
         traffic_gb=plan.get("traffic_gb", 0) if plan else 0,
         duration_days=plan.get("duration_days", 30) if plan else 30,
+    )
+
+    await notifier.notify_admin_purchase(
+        bot=message_or_target.bot,
+        telegram_id=user_id,
+        user=message_or_target.from_user,
+        plan=plan or {"name": "اشتراک اختصاصی GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
+        category_title="گوگل اسکریپت ابری (GAS استقرار)",
+        panel_username=panel_user,
+        price=plan.get("price", 0) if plan else 0,
     )
 
     success_text = (

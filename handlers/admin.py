@@ -52,9 +52,10 @@ from keyboards.inline import (
     admin_tutorial_detail_keyboard,
     admin_downloads_list_keyboard,
     admin_download_detail_keyboard,
+    admin_notifications_keyboard,
 )
 from keyboards.reply import cancel_keyboard, get_main_keyboard
-from utils import trial_manager
+from utils import trial_manager, notifier
 from utils.tutorials import (
     TUTORIAL_TITLES,
     CLIENT_DOWNLOAD_TITLES,
@@ -1000,6 +1001,55 @@ async def cb_admin_ref_top(callback: types.CallbackQuery):
     kb.button(text="🔙 بازگشت به رفرال", callback_data="adm:referral")
     await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
     await callback.answer()
+
+
+# ── تنظیمات اعلان‌های آن‌تایم مدیریت (Real-time Notifications) ──
+@router.callback_query(F.data == "adm:notifications")
+async def cb_admin_notifications_menu(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    is_buy_on = await notifier.is_purchase_notification_enabled()
+    is_trial_on = await notifier.is_trial_notification_enabled()
+
+    text = (
+        "🔔 <b>مدیریت اعلان‌های آن‌تایم (لحظه‌ای) مدیریت</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "در این بخش می‌توانید مشخص کنید هنگام وقوع هریک از رویدادها، ربات به صورت لحظه‌ای به تمام مدیران اعلان ارسال کند یا خیر:\n\n"
+        f"🛒 <b>اعلان خریدهای موفق:</b> {'🟢 فعال (ارسال می‌شود)' if is_buy_on else '🔴 غیرفعال (خاموش)'}\n"
+        "<i>(شامل مشخصات خریدار، نوع محصول، پروتکل، مبلغ پرداختی و حجم)</i>\n\n"
+        f"🎁 <b>اعلان دریافت اکانت تست:</b> {'🟢 فعال (ارسال می‌شود)' if is_trial_on else '🔴 غیرفعال (خاموش)'}\n"
+        "<i>(شامل نام کاربری، شناسه کاربری، حالت انتخابی و اکانت‌های ساخته‌شده)</i>\n\n"
+        "👇 جهت فعال یا غیرفعال‌سازی هر بخش روی دکمه مربوطه کلیک کنید:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_notifications_keyboard(is_buy_on, is_trial_on),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm:notify:toggle_buy")
+async def cb_admin_notify_toggle_buy(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    new_val = await notifier.toggle_purchase_notification()
+    status_text = "فعال شد 🟢" if new_val else "غیرفعال شد 🔴"
+    await callback.answer(f"اعلان خرید {status_text}")
+    await cb_admin_notifications_menu(callback)
+
+
+@router.callback_query(F.data == "adm:notify:toggle_trial")
+async def cb_admin_notify_toggle_trial(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    new_val = await notifier.toggle_trial_notification()
+    status_text = "فعال شد 🟢" if new_val else "غیرفعال شد 🔴"
+    await callback.answer(f"اعلان تست {status_text}")
+    await cb_admin_notifications_menu(callback)
 
 
 # ── پاسخ‌گویی به تیکت‌های پشتیبانی ──

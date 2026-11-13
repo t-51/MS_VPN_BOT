@@ -439,13 +439,27 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     kb.button(text="📥 فیش‌های واریزی در انتظار", callback_data="adm:pending_tx")
     kb.button(text="📢 ارسال اعلان و پیام همگانی", callback_data="adm:broadcast")
     kb.button(text="🎁 تنظیمات اکانت تست", callback_data="adm:trial")
+    kb.button(text="🔔 تنظیمات اعلان‌های مدیریت", callback_data="adm:notifications")
     kb.button(text="👥 مدیریت رفرال و پورسانت", callback_data="adm:referral")
     kb.button(text="📚 مدیریت و ویرایش آموزش‌ها", callback_data="adm:tutorials")
     kb.button(text="📲 مدیریت لینک‌های دانلود نرم‌افزار", callback_data="adm:downloads")
     kb.button(text="🎫 پاسخ به تیکت‌های کاربران", callback_data="adm:tickets")
     kb.button(text="🔄 تست اتصال زنده MHPanel", callback_data="adm:test_panel")
     kb.button(text="❌ بستن پنل مدیریت", callback_data="adm:close")
-    kb.adjust(1, 2, 2, 2, 2, 2, 2, 1, 1)
+    kb.adjust(1, 2, 2, 2, 2, 2, 2, 2, 1)
+    return kb.as_markup()
+
+
+def admin_notifications_keyboard(is_buy_on: bool, is_trial_on: bool) -> InlineKeyboardMarkup:
+    """کیبورد تنظیمات اعلان‌های آن‌تایم خرید و تست برای ادمین."""
+    kb = InlineKeyboardBuilder()
+    buy_icon = "🟢 روشن (ارسال فعال)" if is_buy_on else "🔴 خاموش (غیرفعال)"
+    trial_icon = "🟢 روشن (ارسال فعال)" if is_trial_on else "🔴 خاموش (غیرفعال)"
+
+    kb.button(text=f"🛒 اعلان خرید: {buy_icon}", callback_data="adm:notify:toggle_buy")
+    kb.button(text=f"🎁 اعلان تست: {trial_icon}", callback_data="adm:notify:toggle_trial")
+    kb.button(text="🔙 بازگشت به منوی مدیریت", callback_data="adm:main")
+    kb.adjust(1)
     return kb.as_markup()
 
 
