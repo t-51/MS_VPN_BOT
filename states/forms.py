@@ -29,6 +29,11 @@ class AdminActionStates(StatesGroup):
     waiting_card_info = State()
 
 
+# ── پنل مدیریت: تنظیمات وایت‌لیبل و نام‌گذاری کانفیگ‌ها ──────────
+class AdminWhiteLabelStates(StatesGroup):
+    waiting_brand_name = State()
+
+
 # ── پنل مدیریت: دسته‌بندی‌ها و پلن‌ها ────────────────────────
 class AdminCategoryStates(StatesGroup):
     waiting_title = State()

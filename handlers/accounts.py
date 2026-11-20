@@ -55,6 +55,7 @@ from utils.helpers import (
     make_qr_code_file,
     sanitize_wireguard_conf,
     make_clean_wg_filename,
+    format_config_with_brand,
 )
 from utils.cert_manager import (
     get_ovpn_content,
@@ -227,9 +228,13 @@ async def cb_single_config_view(callback: types.CallbackQuery):
     proto = cfg.get("type", "").upper()
     link = cfg.get("share_link", "")
 
+    brand_name = await database.get_setting("brand_name", "MS VPN")
+    inc_user = (await database.get_setting("brand_include_username", "1")) == "1"
+    branded_link = format_config_with_brand(link, brand_name=brand_name, username=account.get("panel_username", ""), include_username=inc_user)
+
     cfg_text = (
         f"🔑 <b>کانفیگ تکی {proto} ({tag})</b>\n\n"
-        f"<code>{link}</code>\n\n"
+        f"<code>{branded_link}</code>\n\n"
         "💡 با لمس متن بالا، کانفیگ کپی خواهد شد."
     )
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -299,9 +304,12 @@ async def cb_download_all_configs(callback: types.CallbackQuery):
     sub_url = account.get("sub_url") or (live_data.get("sub_url", "") if live_data else "")
     sub_b64 = account.get("sub_b64_url") or (live_data.get("sub_b64_url", "") if live_data else "")
 
+    brand_name = await database.get_setting("brand_name", "MS VPN")
+    inc_user = (await database.get_setting("brand_include_username", "1")) == "1"
+
     lines = [
         "=========================================",
-        "  MS VPN - V2Ray & Sing-box Configurations",
+        f"  {brand_name} - Configurations",
         f"  Username: {account.get('panel_username')}",
         f"  UUID: {u.get('uuid', '—')}",
         f"  Traffic Limit: {account.get('traffic_gb', 0)} GB",
@@ -315,11 +323,13 @@ async def cb_download_all_configs(callback: types.CallbackQuery):
         proto = cfg.get("type", "").upper()
         port = cfg.get("port", "")
         link = cfg.get("share_link", "")
-        lines.append(f"## {idx}. {proto} - {tag} (Port {port})\n{link}\n")
+        branded_link = format_config_with_brand(link, brand_name=brand_name, username=account.get("panel_username", ""), include_username=inc_user)
+        lines.append(f"## {idx}. {proto} - {tag} (Port {port})\n{branded_link}\n")
 
     txt_content = "\n".join(lines)
     file_bytes = txt_content.encode("utf-8")
-    doc = BufferedInputFile(file_bytes, filename=f"configs_{account.get('panel_username')}.txt")
+    clean_brand = re.sub(r'[^a-zA-Z0-9_\-]', '_', brand_name).strip('_') or "VPN"
+    doc = BufferedInputFile(file_bytes, filename=f"{clean_brand}_{account.get('panel_username')}.txt")
 
     caption = (
         f"📦 <b>فایل جامع کانفیگ‌های اشتراک {account.get('panel_username')}</b>\n\n"
@@ -343,9 +353,11 @@ async def cb_download_ovpn(callback: types.CallbackQuery):
     uname = account.get("panel_username", "user")
     pwd = account.get("panel_password", "")
     srv_ip = await database.get_setting("server_ip", settings.SERVER_IP)
+    brand_name = await database.get_setting("brand_name", "MS VPN")
+    clean_brand = re.sub(r'[^a-zA-Z0-9_\-]', '_', brand_name).strip('_') or "VPN"
 
     ovpn_data = get_ovpn_content(server_ip=srv_ip, username=uname, password=pwd)
-    filename = f"MS_VPN_OpenVPN_{uname}.ovpn"
+    filename = f"{clean_brand}_OpenVPN_{uname}.ovpn"
 
     doc = BufferedInputFile(ovpn_data.encode("utf-8"), filename=filename)
     caption = (

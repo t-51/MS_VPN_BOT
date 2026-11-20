@@ -741,6 +741,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="📊 آمار و تحلیل فروش حرفه‌ای", callback_data="adm:stats")
     kb.button(text="📡 ارسال خودکار کانفیگ به کانال", callback_data="adm:autochannel")
+    kb.button(text="🏷️ شخصی‌سازی و وایت‌لیبل کانفیگ‌ها", callback_data="adm:whitelabel")
     kb.button(text="🔒 عضویت اجباری و قفل سین", callback_data="adm:fsub_menu")
     kb.button(text="👤 مدیریت کاربران ربات", callback_data="adm:users_menu")
     kb.button(text="👑 مدیریت مدیران ربات", callback_data="adm:admins_menu")
@@ -757,7 +758,19 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     kb.button(text="🎫 پاسخ به تیکت‌های کاربران", callback_data="adm:tickets")
     kb.button(text="🔄 تست اتصال زنده MHPanel", callback_data="adm:test_panel")
     kb.button(text="❌ بستن پنل مدیریت", callback_data="adm:close")
-    kb.adjust(1, 2, 2, 2, 2, 2, 2, 2, 2, 1)
+    kb.adjust(1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1)
+    return kb.as_markup()
+
+
+def admin_whitelabel_keyboard(include_username: bool = True) -> InlineKeyboardMarkup:
+    """کیبورد تنظیمات شخصی‌سازی نام برند کانفیگ‌ها (White-label)."""
+    kb = InlineKeyboardBuilder()
+    u_toggle_text = "🟢 نام کاربری در تگ کانفیگ: فعال" if include_username else "🔴 نام کاربری در تگ کانفیگ: غیرفعال"
+    kb.button(text="✏️ تغییر نام برند کانفیگ‌ها", callback_data="adm:wl:change_name")
+    kb.button(text=u_toggle_text, callback_data="adm:wl:toggle_user")
+    kb.button(text="🔄 بازنشانی به پیش‌فرض (MS VPN)", callback_data="adm:wl:reset")
+    kb.button(text="🔙 بازگشت به منوی مدیریت", callback_data="adm:main")
+    kb.adjust(1)
     return kb.as_markup()
 
 

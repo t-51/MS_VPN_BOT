@@ -249,3 +249,71 @@ def sanitize_wireguard_conf(conf_text: str, domain: Optional[str] = None, port: 
         text = text.replace("[Peer]", "[Peer]\nPersistentKeepalive = 25", 1)
 
     return text.strip() + "\n"
+
+
+def format_config_with_brand(
+    share_link: str,
+    brand_name: str = "MS VPN",
+    username: str = "",
+    include_username: bool = True,
+) -> str:
+    """
+    اعمال نام برند / وایت‌لیبل بر روی انواع کانفیگ‌های V2Ray و Sing-box (VLESS, VMess, Trojan, Shadowsocks, TUIC, Hysteria 2).
+    - جایگزینی و زیباسازی تگ انتهای لینک (#tag)
+    - دیکود، جایگزینی فیلد ps و انکود مجدد کانفیگ‌های vmess://
+    """
+    if not share_link or not isinstance(share_link, str):
+        return share_link
+
+    clean_brand = (brand_name or "MS VPN").strip()
+
+    # ۱. کانفیگ‌های VMess
+    if share_link.startswith("vmess://"):
+        try:
+            import base64
+            import json
+            raw_b64 = share_link[8:].strip()
+            raw_b64 += "=" * ((4 - len(raw_b64) % 4) % 4)
+            data_json = json.loads(base64.b64decode(raw_b64).decode("utf-8", errors="ignore"))
+            old_ps = data_json.get("ps", "")
+            proto_hint = "VMess"
+            if " - " in old_ps:
+                proto_hint = old_ps.split(" - ", 1)[1].strip()
+            elif "-" in old_ps:
+                proto_hint = old_ps.split("-", 1)[1].strip()
+
+            if not include_username:
+                proto_hint = re.sub(r'\s*\([^)]*\)\s*$', '', proto_hint).strip()
+                new_ps = f"{clean_brand} - {proto_hint}"
+            else:
+                user_suffix = f" ({username})" if (username and f"({username})" not in proto_hint) else ""
+                new_ps = f"{clean_brand} - {proto_hint}{user_suffix}"
+
+            data_json["ps"] = new_ps
+            new_b64 = base64.b64encode(json.dumps(data_json, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+            return f"vmess://{new_b64}"
+        except Exception:
+            return share_link
+
+    # ۲. کانفیگ‌های مبتنی بر URL و تگ Fragment (#...)
+    if "#" in share_link:
+        import urllib.parse
+        base_url, old_tag = share_link.split("#", 1)
+        decoded_tag = urllib.parse.unquote(old_tag).strip()
+
+        proto_part = decoded_tag
+        if " - " in decoded_tag:
+            proto_part = decoded_tag.split(" - ", 1)[1].strip()
+
+        if not include_username:
+            proto_part = re.sub(r'\s*\([^)]*\)\s*$', '', proto_part).strip()
+            new_tag = f"{clean_brand} - {proto_part}".strip()
+        else:
+            if username and f"({username})" not in proto_part:
+                proto_part = f"{proto_part} ({username})"
+            new_tag = f"{clean_brand} - {proto_part}".strip()
+
+        quoted_tag = urllib.parse.quote(new_tag, safe=" ()[]-_@:")
+        return f"{base_url}#{quoted_tag}"
+
+    return share_link

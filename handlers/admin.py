@@ -54,6 +54,7 @@ from keyboards.inline import (
     admin_downloads_list_keyboard,
     admin_download_detail_keyboard,
     admin_notifications_keyboard,
+    admin_whitelabel_keyboard,
 )
 from keyboards.reply import cancel_keyboard, get_main_keyboard
 from utils import trial_manager, notifier
@@ -79,6 +80,7 @@ from states.forms import (
     AdminUserStates,
     AdminManageStates,
     AdminTutorialStates,
+    AdminWhiteLabelStates,
 )
 from utils.formatters import (
     format_sales_stats,
@@ -2555,4 +2557,114 @@ async def cb_admin_dl_reset(callback: types.CallbackQuery):
     await reset_download_url(dl_key)
     await callback.answer("✅ لینک دانلود به حالت پیش‌فرض بازنشانی شد.", show_alert=True)
     await cb_admin_dl_view(callback, None)
+
+
+# ──────────────────────────────────────────────────────────────
+#  شخصی‌سازی و وایت‌لیبل نام کانفیگ‌ها (White-Label Settings)
+# ──────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm:whitelabel")
+async def cb_admin_whitelabel_menu(callback: types.CallbackQuery, state: FSMContext = None):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    if state:
+        await state.clear()
+
+    brand_name = await database.get_setting("brand_name", "MS VPN")
+    inc_user = (await database.get_setting("brand_include_username", "1")) == "1"
+
+    safe_brand = re.sub(r'[^a-zA-Z0-9_\-]', '_', brand_name).strip('_') or "VPN"
+    user_prev = " (user1)" if inc_user else ""
+
+    text = (
+        "🏷️ <b>تنظیمات شخصی‌سازی و وایت‌لیبل کانفیگ‌ها (White-Label)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "مدیر گرامی، از این بخش می‌توانید عنوان و برند کلیه کانفیگ‌ها، سابسکریپشن و فایل‌های ارسالی به کاربران را به دلخواه خود تغییر دهید تا هیچ رد یا نام ثابتی از پنل پیش‌فرض باقی نماند.\n\n"
+        f"🏷 <b>نام برند فعلی کانفیگ‌ها:</b> <code>{brand_name}</code>\n"
+        f"👤 <b>درج نام کاربری در انتهای تگ:</b> <b>{'✅ فعال' if inc_user else '❌ غیرفعال'}</b>\n\n"
+        "👀 <b>پیش‌نمایش زنده نام کانفیگ‌ها در نرم‌افزارهای کاربر:</b>\n"
+        f"▫️ کانفیگ ریالیتی: <code>#{brand_name} - VLESS-Reality-Vision (Port 443){user_prev}</code>\n"
+        f"▫️ کانفیگ وی‌مس: <code>{brand_name} - VMess-WS-TLS{user_prev}</code>\n"
+        f"▫️ فایل اوپن‌وی‌پی‌ان: <code>{safe_brand}_OpenVPN_user.ovpn</code>\n"
+        f"▫️ فایل وایرگارد: <code>{safe_brand}_wg.conf</code>\n"
+        f"▫️ فایل متنی تجمیعی: <code>{brand_name} - Configurations.txt</code>\n"
+        f"▫️ صفحه وب سابسکریپشن: <code>عنوان برند: {brand_name}</code>\n\n"
+        "👇 جهت تغییر نام برند یا تنظیمات نمایش، گزینه مورد نظر را انتخاب فرمایید:"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_whitelabel_keyboard(include_username=inc_user), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm:wl:change_name")
+async def cb_admin_wl_change_name(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    await state.set_state(AdminWhiteLabelStates.waiting_brand_name)
+    cur_brand = await database.get_setting("brand_name", "MS VPN")
+    text = (
+        "✏️ <b>تغییر نام برند کانفیگ‌ها (White-Label):</b>\n\n"
+        f"نام فعلی: <code>{cur_brand}</code>\n\n"
+        "لطفاً نام یا برند دلخواه جدید خود را ارسال فرمایید (مثال: <code>VIP VPN</code> یا <code>KigaPing</code> یا <code>فیلترشکن اختصاصی</code>):\n\n"
+        "💡 جهت انصراف دکمه «❌ لغو» را ارسال فرمایید."
+    )
+    await callback.message.answer(text, reply_markup=cancel_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminWhiteLabelStates.waiting_brand_name)
+async def state_save_brand_name(message: types.Message, state: FSMContext):
+    if not _is_admin(message):
+        return
+    text = (message.text or "").strip()
+    if text == "❌ لغو":
+        await state.clear()
+        return await message.answer("❌ عملیات تغییر نام برند لغو شد.", reply_markup=get_main_keyboard(True))
+
+    if len(text) < 2 or len(text) > 40:
+        return await message.answer("❌ نام برند باید بین ۲ الی ۴۰ کاراکتر باشد. لطفاً مجدداً ارسال فرمایید:")
+
+    await database.set_setting("brand_name", text)
+
+    # همگام‌سازی نام با سابسکریپشن پنل MHPanel
+    try:
+        await panel_api.update_sub_settings(text)
+    except Exception as e:
+        logger.warning(f"Error updating MHPanel sub settings: {e}")
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>نام برند کانفیگ‌ها با موفقیت به «{text}» تغییر یافت!</b>\n\n"
+        "از این پس کلیه کانفیگ‌های صادره، صفحه سابسکریپشن و فایل‌های ارسالی با این نام وایت‌لیبل تولید خواهند شد.",
+        reply_markup=get_main_keyboard(True),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "adm:wl:toggle_user")
+async def cb_admin_wl_toggle_user(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    cur = (await database.get_setting("brand_include_username", "1")) == "1"
+    new_val = "0" if cur else "1"
+    await database.set_setting("brand_include_username", new_val)
+    status_str = "غیرفعال شد" if cur else "فعال شد"
+    await callback.answer(f"نمایش نام کاربری در انتهای کانفیگ {status_str}.", show_alert=True)
+    await cb_admin_whitelabel_menu(callback, None)
+
+
+@router.callback_query(F.data == "adm:wl:reset")
+async def cb_admin_wl_reset(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    await database.set_setting("brand_name", "MS VPN")
+    await database.set_setting("brand_include_username", "1")
+    try:
+        await panel_api.update_sub_settings("MS VPN")
+    except Exception:
+        pass
+    await callback.answer("✅ نام برند کانفیگ‌ها به حالت پیش‌فرض (MS VPN) بازنشانی شد.", show_alert=True)
+    await cb_admin_whitelabel_menu(callback, None)
 

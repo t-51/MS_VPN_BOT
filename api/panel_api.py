@@ -516,3 +516,24 @@ async def get_system_status() -> Dict[str, Any]:
     """استعلام وضعیت سرور و مصرف منابع و ترافیک از پنل."""
     from config import settings
     return await client.get(f"public/status?key={settings.PANEL_API_KEY}")
+
+
+# ──────────────────────────────────────────────────────────────
+#  شخصی‌سازی و وایت‌لیبل برند پنل (White-Label)
+# ──────────────────────────────────────────────────────────────
+
+async def get_sub_settings() -> Dict[str, Any]:
+    """دریافت تنظیمات برند، تایتل و صفحه سابسکریپشن از پنل MHPanel."""
+    return await client.get("sub/settings")
+
+
+async def update_sub_settings(brand_name: str, brand_subtitle: str = "") -> Dict[str, Any]:
+    """بروزرسانی نام برند و تایتل سابسکریپشن در پنل جهت وایت‌لیبل کامل."""
+    payload = {
+        "brand_name": brand_name,
+        "brand_title": brand_name,
+        "title": brand_name,
+    }
+    if brand_subtitle:
+        payload["brand_subtitle"] = brand_subtitle
+    return await client.post("sub/settings", data=payload)
