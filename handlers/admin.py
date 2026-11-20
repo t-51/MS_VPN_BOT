@@ -2608,8 +2608,8 @@ async def cb_admin_wl_change_name(callback: types.CallbackQuery, state: FSMConte
         "لطفاً نام یا برند دلخواه جدید خود را ارسال فرمایید (مثال: <code>VIP VPN</code> یا <code>KigaPing</code> یا <code>فیلترشکن اختصاصی</code>):\n\n"
         "💡 جهت انصراف دکمه «❌ لغو» را ارسال فرمایید."
     )
-    await callback.message.answer(text, reply_markup=cancel_keyboard(), parse_mode="HTML")
     await callback.answer()
+    await callback.message.answer(text, reply_markup=cancel_keyboard, parse_mode="HTML")
 
 
 @router.message(AdminWhiteLabelStates.waiting_brand_name)
