@@ -11,12 +11,29 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import settings
 from db import database
 from handlers import get_main_router
+from filters.force_join_middleware import ForceJoinMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s"
 )
 logger = logging.getLogger("MS_VPN_BOT")
+
+
+async def auto_channel_post_background_loop(bot: Bot):
+    """حلقه پس‌زمینه بررسی زمان‌بندی و ارسال خودکار کانفیگ به کانال مقصد تلگرام."""
+    from utils.channel_poster import check_and_run_scheduled_channel_posts
+    logger.info("حلقه پس‌زمینه ارسال خودکار کانفیگ به کانال تلگرام فعال شد.")
+    while True:
+        try:
+            # هر ۳۰ ثانیه وضعیت ساعت و روز بررسی می‌شود
+            await asyncio.sleep(30)
+            await check_and_run_scheduled_channel_posts(bot)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"خطا در حلقه پس‌زمینه ارسال خودکار کانفیگ به کانال: {e}")
+            await asyncio.sleep(30)
 
 
 async def trial_cleanup_background_loop(bot: Bot):
@@ -57,6 +74,10 @@ async def main():
     bot = Bot(token=settings.TELEGRAM_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
+    # اعمال میدلور سراسری قفل عضویت اجباری و قفل سین
+    dp.message.middleware(ForceJoinMiddleware())
+    dp.callback_query.middleware(ForceJoinMiddleware())
+
     # الصاق روترهای اصلی برنامه
     dp.include_router(get_main_router())
 
@@ -75,13 +96,15 @@ async def main():
     except Exception as e:
         logger.error(f"خطا در پاکسازی اولیه تست‌ها: {e}")
 
-    # اجرای تسک پس‌زمینه پاکسازی خودکار دوره‌ای
+    # اجرای تسک‌های پس‌زمینه (پاکسازی تستی‌ها و ارسال خودکار به کانال)
     cleanup_task = asyncio.create_task(trial_cleanup_background_loop(bot))
+    auto_channel_task = asyncio.create_task(auto_channel_post_background_loop(bot))
 
     try:
         await dp.start_polling(bot)
     finally:
         cleanup_task.cancel()
+        auto_channel_task.cancel()
         await bot.session.close()
 
 

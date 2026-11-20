@@ -35,7 +35,8 @@ def format_account_item(acc: Dict[str, Any], index: int = 0) -> str:
         "singbox": "⚡ Sing-box & V2Ray",
         "system_l2tp": "🛡️ پروتکل‌های استاندارد سیستمی",
         "dnstt": "🌐 تانل ضد فیلتر DNS",
-        "wireguard": "⚡ وایرگارد مدرن (WireGuard)",
+        "amneziawg": "🛡️ وایرگارد پیشرفته (AmneziaWG)",
+        "wireguard": "⚡ وایرگارد معمولی (WireGuard)",
         "gas": "☁️ گوگل اسکریپت (GAS / Workers)",
     }
     cat = acc.get("category", "singbox")
@@ -43,7 +44,12 @@ def format_account_item(acc: Dict[str, Any], index: int = 0) -> str:
     plan = acc.get("plan_name", "اشتراک")
     acc_type = "🎁 تستی" if acc.get("is_trial") else "💎 VIP"
     uname = acc.get("panel_username", "—")
-    return f"{prefix}<b>{plan}</b> [{acc_type} | {cat_title}]\n   👤 نام کاربری: <code>{uname}</code>"
+    custom_name = acc.get("custom_name")
+    cat_name = acc.get("user_category_name")
+
+    title_part = f"<b>{custom_name}</b> ({plan})" if custom_name else f"<b>{plan}</b>"
+    folder_part = f" [📁 {cat_name}]" if cat_name else ""
+    return f"{prefix}{title_part} [{acc_type} | {cat_title}]{folder_part}\n   👤 نام کاربری: <code>{uname}</code>"
 
 
 def format_accounts_list(accounts: List[Dict[str, Any]]) -> str:
@@ -63,6 +69,15 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
     cat = acc.get("category", "singbox")
     uname = acc.get("panel_username", "—")
     plan = acc.get("plan_name", "—")
+    custom_name = acc.get("custom_name")
+    user_cat = acc.get("user_category_name")
+    alias_line = f"🏷 <b>نام دلخواه:</b> <code>{custom_name}</code>\n" if custom_name else ""
+    cat_line = f"📁 <b>دسته‌بندی شخصی:</b> <b>{user_cat}</b>\n" if user_cat else ""
+    price_val = acc.get("price") or 0
+    price_line = f"💰 <b>مبلغ پرداختی:</b> <b>{to_toman(price_val)}</b>\n" if price_val > 0 else ""
+    custom_header = f"{alias_line}{cat_line}{price_line}"
+    if custom_header:
+        custom_header = custom_header + "────────────────────\n"
 
     # 1. اگر پروتکل‌های استاندارد سیستمی (Cisco, OpenVPN, L2TP, IKEv2, SSH, SSTP) باشد:
     if cat == "system_l2tp":
@@ -70,6 +85,7 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
         return (
             "🛡️ <b>مشخصات اکانت پروتکل‌های استاندارد سیستمی</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{custom_header}"
             f"🏷 پلن: <b>{plan}</b>\n"
             f"👤 <b>نام کاربری (Username):</b> <code>{uname}</code>\n"
             f"🔑 <b>رمز عبور (Password):</b> <code>{pwd}</code>\n"
@@ -91,6 +107,7 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
         return (
             "🌐 <b>مشخصات اشتراک تانل ضد فیلتر DNS (SlowDNS / SlipNet)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{custom_header}"
             f"🏷 پلن: <b>{plan}</b>\n"
             f"👤 <b>نام کاربری:</b> <code>{uname}</code>\n"
             f"🔑 <b>رمز عبور:</b> <code>{pwd}</code>\n"
@@ -101,23 +118,57 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
             "👇 جهت دانلود فایل متنی کانفیگ‌ها، نمایش متنی یا دریافت بارکد QR، دکمه‌های زیر را لمس نمایید:"
         )
 
-    # 3. اگر پروتکل اختصاصی وایرگارد (WireGuard) باشد:
-    if cat == "wireguard":
+    # 3. اگر وایرگارد معمولی یا وایرگارد پیشرفته (AmneziaWG) باشد:
+    if cat in ("wireguard", "amneziawg"):
+        is_awg = (cat == "amneziawg")
+        title_header = "🛡️ <b>مشخصات اشتراک وایرگارد پیشرفته ضد فیلتر (AmneziaWG)</b>" if is_awg else "⚡ <b>مشخصات اشتراک وایرگارد معمولی (WireGuard)</b>"
         wg_conf = acc.get("server_info", "")
         pubkey = acc.get("panel_password", "—")
         ip_match = re.search(r"Address\s*=\s*([^\n\r/]+)", wg_conf) if wg_conf else None
-        client_ip = ip_match.group(1).strip() if ip_match else "اختصاصی"
-        return (
-            "⚡ <b>مشخصات اشتراک اختصاصی وایرگارد (WireGuard)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏷 پلن: <b>{plan}</b>\n"
-            f"👤 نام کاربری: <code>{uname}</code>\n"
-            f"🌐 آی‌پی کلاینت: <code>{client_ip}</code>\n"
-            f"📶 حجم ترافیک: <b>{to_fa(acc.get('traffic_gb', 0))} گیگابایت</b>\n"
-            f"⏱ مدت اعتبار: <b>{to_fa(acc.get('duration_days', 0))} روز</b>\n"
-            f"🔑 کلید عمومی: <code>{pubkey[:24]}...</code>\n\n"
-            "👇 جهت دانلود فایل <code>.conf</code> یا اسکن بارکد در اپلیکیشن وایرگارد، از دکمه‌های زیر استفاده فرمایید:"
+        client_ip = (live_data.get("ip") if live_data else None) or (ip_match.group(1).strip() if ip_match else "اختصاصی")
+
+        traffic_lines = []
+        if live_data and live_data.get("success"):
+            used_fmt = live_data.get("used_traffic_formatted", "۰ بایت")
+            limit_fmt = live_data.get("traffic_limit_formatted", f"{acc.get('traffic_gb')} GB")
+            pct = live_data.get("traffic_percent", 0.0)
+            rem_fmt = live_data.get("remaining_traffic_formatted", "نامحدود")
+            st = live_data.get("status", "active")
+            st_str = "🟢 فعال و متصل" if st == "active" else ("⚠️ پایان حجم ترافیک" if st == "traffic_expired" else "🔴 منقضی / مسدود")
+            exp = live_data.get("expire_date") or f"{to_fa(acc.get('duration_days', 0))} روز پس از اولین اتصال"
+
+            traffic_lines = [
+                f"📶 وضعیت سرویس: <b>{st_str}</b>",
+                f"📊 مصرف ترافیک: <b>{to_fa(used_fmt)}</b> از <b>{to_fa(limit_fmt)}</b> ({to_fa(pct)}٪)",
+                f"🔋 حجم باقیمانده: <b>{to_fa(rem_fmt)}</b>",
+                f"⏱ تاریخ انقضا: <b>{to_fa(exp)}</b>",
+            ]
+        else:
+            traffic_lines = [
+                f"📶 سقف ترافیک: <b>{to_fa(acc.get('traffic_gb', 0))} گیگابایت</b>",
+                f"⏱ مدت اعتبار: <b>{to_fa(acc.get('duration_days', 0))} روز</b>",
+            ]
+
+        note_txt = (
+            "💡 <i>این سرویس دارای متدهای پیشرفته ضد فیلتر (Obfuscation) جهت دور زدن اختلالات شدید اینترنت است. "
+            "می‌توانید فایل تکی، بارکد یا پکیج فشرده ZIP تمام پورت‌ها را از دکمه‌های زیر دریافت کنید.</i>"
+            if is_awg else
+            "💡 <i>پروتکل سبک، پایدار و پرسرعت جهت استفاده در اپلیکیشن رسمی WireGuard.</i>"
         )
+
+        lines = [
+            title_header,
+            "━━━━━━━━━━━━━━━━━━━━",
+            custom_header if custom_header else "",
+            f"🏷 پلن: <b>{plan}</b>",
+            f"👤 نام کاربری: <code>{uname}</code>",
+            f"🌐 آی‌پی کلاینت: <code>{client_ip}</code>",
+            *traffic_lines,
+            f"🔑 کلید عمومی: <code>{pubkey[:24]}...</code>\n",
+            note_txt,
+            "\n👇 جهت دانلود کانفیگ .conf، بارکد QR، پورت‌های مولتی یا پکیج ZIP، از دکمه‌های زیر استفاده فرمایید:"
+        ]
+        return "\n".join([line for line in lines if line])
 
     # 4. اگر تونل ابری گوگل اسکریپت (GAS) باشد:
     if cat == "gas":
@@ -128,6 +179,7 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
         return (
             "☁️ <b>مشخصات اکانت تونل ابری گوگل اسکریپت (GAS / Workers)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{custom_header}"
             f"🏷 پلن: <b>{plan}</b>\n"
             f"👤 نام پروژه: <code>{uname}</code>\n"
             f"🔑 کلید رمز تونل: <code>{secret}</code>\n"
@@ -156,6 +208,7 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
 
     lines = [
         "⚡ <b>مشخصات و وضعیت زنده اشتراک هوشمند Sing-box و V2Ray</b>\n",
+        f"{custom_header}" if custom_header else "",
         f"🏷 پلن: <b>{plan}</b>",
         f"👤 شناسه اشتراک: <code>{uname}</code>",
         f"🆔 <b>شناسه اتصال (UUID):</b>\n<code>{uuid_str}</code>",
@@ -168,6 +221,60 @@ def format_account_details(acc: Dict[str, Any], live_data: Optional[Dict[str, An
         f"<code>{sub_b64}</code>\n",
         f"💡 <i>این سرویس حاوی {to_fa(cfg_cnt)} کانفیگ متنوع شامل Reality, VMess, VLESS, Trojan, Hysteria 2 و TUIC است. در پروتکل‌های V2Ray نیازی به رمز عبور نیست؛ اتصال بر پایه UUID و لینک‌های ساب بالا می‌باشد.</i>",
     ]
+    return "\n".join([line for line in lines if line])
+    return "\n".join(lines)
+
+
+def format_searched_config(
+    user_data: Dict[str, Any],
+    account: Optional[Dict[str, Any]] = None,
+    is_owner: bool = False,
+) -> str:
+    """قالب‌بندی نمایش نتیجه استعلام زنده کانفیگ بر اساس UID یا اطلاعات پنل."""
+    uname = user_data.get("username") or (account.get("panel_username") if account else "—")
+    uuid_str = user_data.get("uuid") or (account.get("uuid") if account else "—") or "در سرور فعال"
+    plan_name = (account.get("plan_name") if account else "") or user_data.get("category") or "اشتراک هوشمند"
+
+    used_fmt = user_data.get("used_traffic_formatted") or "۰ بایت"
+    limit_fmt = user_data.get("traffic_limit_formatted") or (f"{account.get('traffic_gb')} GB" if account else "تعیین نشده")
+    pct = user_data.get("traffic_percent", 0.0)
+    expire = user_data.get("expire_date") or "پس از اولین اتصال"
+    days_rem = user_data.get("days_remaining")
+    days_str = f" ({to_fa(days_rem)} روز باقی‌مانده)" if days_rem is not None else ""
+
+    if user_data.get("is_expired"):
+        status_str = "🔴 منقضی شده"
+    elif user_data.get("is_quota_exceeded"):
+        status_str = "⚠️ پایان حجم ترافیک"
+    elif not user_data.get("enabled", True):
+        status_str = "🔴 غیرفعال / مسدود"
+    else:
+        status_str = "🟢 فعال و آماده اتصال"
+
+    sub_url = user_data.get("sub_url") or (account.get("sub_url") if account else "")
+    sub_b64 = user_data.get("sub_b64_url") or (account.get("sub_b64_url") if account else "")
+
+    lines = [
+        "🔍 <b>مشخصات و استعلام زنده کانفیگ</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🏷 <b>پلن / دسته:</b> <b>{plan_name}</b>",
+        f"👤 <b>شناسه اشتراک:</b> <code>{uname}</code>",
+        f"🆔 <b>شناسه اتصال (UUID):</b>\n<code>{uuid_str}</code>",
+        f"📶 <b>وضعیت سرویس:</b> {status_str}",
+        f"📊 <b>مصرف ترافیک:</b> <b>{to_fa(used_fmt)}</b> از <b>{to_fa(limit_fmt)}</b> ({to_fa(pct)}٪)",
+        f"⏱ <b>تاریخ انقضا:</b> <b>{to_fa(expire)}</b>{days_str}\n",
+    ]
+
+    if sub_url:
+        lines.append(f"🔗 <b>لینک هوشمند سابسکریپشن:</b>\n<code>{sub_url}</code>\n")
+    if sub_b64:
+        lines.append(f"📡 <b>لینک Base64 (مخصوص v2rayNG / SlipNet):</b>\n<code>{sub_b64}</code>\n")
+
+    if is_owner:
+        lines.append("💡 <i>این اشتراک در حساب کاربری شما ثبت است و می‌توانید آن را مدیریت کرده یا هدیه دهید.</i>")
+    else:
+        lines.append("💡 <i>اطلاعات بالا مستقیماً و به صورت زنده از سرور استعلام گردید.</i>")
+
     return "\n".join(lines)
 
 

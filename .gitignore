@@ -32,13 +32,9 @@ env/
 *.env.local
 
 # Database & SQLite files
-data/*.db
-data/*.sqlite
-data/*.sqlite3
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+data/
 *.db
+*.bak
 
 # Logs
 *.log

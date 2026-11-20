@@ -1,6 +1,7 @@
 """هندلر فروشگاه: دسته‌بندی‌های پویا، ایزوله‌سازی پروتکل‌ها (V2Ray, Singbox, L2TP, DNS, WireGuard, GAS) و صدور آنی."""
 import io
 import json
+import logging
 import secrets
 import qrcode
 from aiogram import Router, F, types
@@ -14,6 +15,7 @@ from db import database
 from filters.auth import IsAuthorized
 from keyboards.inline import (
     build_shop_categories_keyboard,
+    shop_category_durations_keyboard,
     build_plans_keyboard,
     build_payment_methods_keyboard,
     account_details_keyboard,
@@ -21,11 +23,20 @@ from keyboards.inline import (
 )
 from keyboards.reply import main_menu_keyboard, cancel_keyboard
 from states.forms import ChargeCardStates, GASWizardStates
-from utils.helpers import to_toman, to_fa, api_error_text
+from utils.helpers import (
+    to_toman,
+    to_fa,
+    api_error_text,
+    make_qr_code_file,
+    duration_label,
+    sanitize_wireguard_conf,
+    make_clean_wg_filename,
+)
 from utils import trial_manager
 from utils import notifier
 
 router = Router(name="shop")
+logger = logging.getLogger("MS_VPN_BOT.shop")
 router.message.filter(IsAuthorized())
 router.callback_query.filter(IsAuthorized())
 
@@ -228,30 +239,39 @@ async def _execute_trial_issuance(
     # ── ۲. حالت فقط Sing-box و V2Ray ──
     elif mode == "singbox":
         success_text = (
-            "🎉 <b>اکانت تستی Sing-box و V2Ray با موفقیت صادر شد!</b>\n\n"
+            "🎉 <b>اکانت تستی Sing-box و V2Ray با موفقیت صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 نام کاربری در پنل: <code>{res['username']}</code>\n"
             f"📶 ترافیک هدیه: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
             f"⏱ مدت اعتبار: <b>{to_fa(trial_days)} روز</b> (پس از اولین اتصال)\n\n"
+            "📷 <b>بارکد QR اتصال (اسکن مستقیم در کلاینت):</b>\n"
             "🔗 <b>لینک هوشمند سابسکریپشن:</b>\n"
             f"<code>{res['sub_url']}</code>\n\n"
             "📡 <b>لینک ساب Base64 (سازگار با تمامی کلاینت‌ها):</b>\n"
             f"<code>{res['sub_b64_url']}</code>\n\n"
-            "💡 جهت اتصال، لینک بالا را در نرم‌افزارهای SlipNet، v2rayNG یا Sing-box وارد فرمایید.\n"
-            "⚠️ <i>این اکانت تستی پس از پایان اعتبار به صورت خودکار از پنل حذف خواهد شد.</i>"
+            "💡 جهت اتصال، بارکد بالا را اسکن کرده یا لینک ساب را در v2rayNG یا Sing-box وارد نمایید.\n"
+            "⚠️ <i>این اکانت تستی پس از پایان مهلت تست، به صورت خودکار از پنل حذف خواهد شد.</i>"
         )
+        qr_file = make_qr_code_file(res['sub_url'], filename=f"trial_sub_{res['username']}.png")
         if is_edit:
             try:
                 await msg.delete()
             except Exception:
                 pass
-            await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+            try:
+                await msg.answer_photo(qr_file, caption=success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+            except Exception:
+                await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
         else:
             if wait_msg:
                 try:
                     await wait_msg.delete()
                 except Exception:
                     pass
-            await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+            try:
+                await msg.answer_photo(qr_file, caption=success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
+            except Exception:
+                await msg.answer(success_text, reply_markup=main_menu_keyboard, parse_mode="HTML")
 
     # ── ۳. حالت پروتکل‌های سیستمی (Cisco / OpenVPN / L2TP) ──
     elif mode == "system_l2tp":
@@ -281,7 +301,69 @@ async def _execute_trial_issuance(
                     pass
             await msg.answer(success_text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
-    # ── ۴. حالت پروتکل اختصاصی وایرگارد ──
+    # ── ۴. حالت پروتکل پیشرفته AmneziaWG ──
+    elif mode == "amneziawg":
+        success_text = (
+            "🎉 <b>اکانت تستی وایرگارد پیشرفته ضد فیلتر (AmneziaWG) صادر شد!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 نام کاربری: <code>{res['username']}</code>\n"
+            f"🌐 آی‌پی کلاینت: <code>{res['client_ip']}</code>\n"
+            f"📶 حجم ترافیک هدیه: <b>{to_fa(trial_gb)} گیگابایت</b>\n"
+            f"⏱ مدت اعتبار: <b>{to_fa(trial_days)} روز</b>\n\n"
+            "⚡ فایل کانفیگ اختصاصی، بارکد QR و پکیج فشرده ZIP تمام پورت‌ها در زیر برای شما ارسال شد.\n"
+            "⚠️ <i>این اکانت تستی پس از پایان مهلت تست، به صورت خودکار از پنل حذف خواهد شد.</i>"
+        )
+        if is_edit:
+            await msg.edit_text(success_text, parse_mode="HTML")
+        else:
+            if wait_msg:
+                try:
+                    await wait_msg.delete()
+                except Exception:
+                    pass
+            await msg.answer(success_text, parse_mode="HTML")
+
+        wg_conf = sanitize_wireguard_conf(res.get("config", ""))
+        wg_user = res.get("username", "")
+        pubkey = res.get("public_key", "")
+        if wg_conf:
+            clean_wg_fname = make_clean_wg_filename(wg_user)
+            try:
+                conf_doc = BufferedInputFile(wg_conf.encode("utf-8"), filename=clean_wg_fname)
+                await msg.answer_document(
+                    conf_doc,
+                    caption=f"📁 فایل کانفیگ AmneziaWG: <code>{clean_wg_fname[:-5]}</code>\n👤 کاربر: <code>{wg_user}</code>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            try:
+                qr_photo = make_qr_code_file(wg_conf, filename=f"qr_{clean_wg_fname[:-5]}.png")
+                await msg.answer_photo(qr_photo, caption="📷 بارکد اختصاصی AmneziaWG جهت اسکن مستقیم")
+            except Exception:
+                pass
+            # ارسال فایل ZIP کلیه پورت‌ها
+            try:
+                configs = await panel_api.get_amneziawg_client_multiport(public_key=pubkey, base_conf=wg_conf)
+                if configs:
+                    import zipfile
+                    zip_bio = io.BytesIO()
+                    with zipfile.ZipFile(zip_bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                        for c in configs:
+                            p = c.get("port")
+                            fname = make_clean_wg_filename(wg_user, port=p)
+                            zf.writestr(fname, c.get("config", "").encode("utf-8"))
+                    zip_bio.seek(0)
+                    zip_doc = BufferedInputFile(zip_bio.getvalue(), filename=f"{clean_wg_fname[:-5]}_awg_all_ports.zip")
+                    await msg.answer_document(
+                        zip_doc,
+                        caption=f"📦 <b>پکیج کامل کلیه پورت‌های AmneziaWG (فایل ZIP)</b>\n👤 <code>{wg_user}</code>\n📊 شامل {to_fa(len(configs))} پورت مختلف ضد فیلتر",
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                logger.error(f"Error sending AWG trial zip: {e}")
+
+    # ── ۵. حالت پروتکل اختصاصی وایرگارد ──
     elif mode == "wireguard":
         success_text = (
             "🎉 <b>اکانت تستی اختصاصی وایرگارد (WireGuard) صادر شد!</b>\n"
@@ -303,23 +385,21 @@ async def _execute_trial_issuance(
                     pass
             await msg.answer(success_text, parse_mode="HTML")
 
-        wg_conf = res.get("config", "")
+        wg_conf = sanitize_wireguard_conf(res.get("config", ""))
         wg_user = res.get("username", "")
         if wg_conf:
+            clean_wg_fname = make_clean_wg_filename(wg_user)
             try:
-                conf_doc = BufferedInputFile(wg_conf.encode("utf-8"), filename=f"MS_WireGuard_{wg_user}.conf")
-                await msg.answer_document(conf_doc, caption=f"📁 فایل کانفیگ وایرگارد: <code>{wg_user}</code>", parse_mode="HTML")
+                conf_doc = BufferedInputFile(wg_conf.encode("utf-8"), filename=clean_wg_fname)
+                await msg.answer_document(
+                    conf_doc,
+                    caption=f"📁 فایل کانفیگ وایرگارد: <code>{clean_wg_fname[:-5]}</code>\n👤 کاربر: <code>{wg_user}</code>",
+                    parse_mode="HTML"
+                )
             except Exception:
                 pass
             try:
-                qr = qrcode.QRCode(box_size=8, border=3)
-                qr.add_data(wg_conf)
-                qr.make(fit=True)
-                img = qr.make_image(fill_color="black", back_color="white")
-                bio = io.BytesIO()
-                img.save(bio, format="PNG")
-                bio.seek(0)
-                qr_photo = BufferedInputFile(bio.getvalue(), filename=f"wg_qr_{wg_user}.png")
+                qr_photo = make_qr_code_file(wg_conf, filename=f"qr_{clean_wg_fname[:-5]}.png")
                 await msg.answer_photo(qr_photo, caption="📷 بارکد اختصاصی WireGuard جهت اسکن مستقیم")
             except Exception:
                 pass
@@ -411,19 +491,65 @@ async def cb_select_category(callback: types.CallbackQuery):
     if not cat.get("is_active"):
         return await callback.answer("⚠️ این دسته‌بندی در حال حاضر توسط مدیریت خاموش و غیرفعال شده است.", show_alert=True)
 
-    plans = await database.get_plans_by_category(cat_key, active_only=True)
-    if not plans:
+    durs = await database.get_distinct_plan_durations(cat_key)
+    if not durs:
         return await callback.answer("هنوز پلنی برای این دسته‌بندی ثبت نشده است.", show_alert=True)
 
     icon = cat.get("icon") or "⚡"
     title = cat.get("title", "")
     desc = cat.get("description", "")
+
+    # اگر تنوع مدت زمان وجود دارد، ابتدا منوی بازه‌های زمانی را نمایش می‌دهیم
+    if len(durs) > 1:
+        text = (
+            f"{icon} <b>انتخاب مدت زمان اشتراک {title}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>{desc}</i>\n\n"
+            "👇 <b>لطفاً مدت زمان اعتبار مورد نظر خود را انتخاب فرمایید:</b>"
+        )
+        await callback.message.edit_text(text, reply_markup=shop_category_durations_keyboard(cat_key, durs), parse_mode="HTML")
+        return await callback.answer()
+
+    # اگر فقط ۱ مدت زمان وجود دارد
+    dur = durs[0]
+    plans = await database.get_plans_by_category(cat_key, active_only=True, duration_days=dur)
+    dur_lbl = duration_label(dur)
     text = (
-        f"{icon} <b>پلن‌های اشتراک {title}</b>\n\n"
+        f"{icon} <b>پلن‌های {dur_lbl} {title}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         f"<i>{desc}</i>\n\n"
-        "👇 لطفاً پلن مورد نظر خود را انتخاب فرمایید:"
+        "👇 لطفاً حجم ترافیک مورد نظر خود را انتخاب فرمایید:"
     )
-    await callback.message.edit_text(text, reply_markup=build_plans_keyboard(plans, cat_key), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=build_plans_keyboard(plans, cat_key, current_dur=dur), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shop:dur:"))
+async def cb_select_category_duration(callback: types.CallbackQuery):
+    parts = callback.data.split(":")
+    cat_key = parts[2]
+    dur_days = int(parts[3])
+
+    cat = await database.get_category_by_key(cat_key)
+    if not cat or not cat.get("is_active"):
+        return await callback.answer("دسته‌بندی در دسترس نیست.", show_alert=True)
+
+    plans = await database.get_plans_by_category(cat_key, active_only=True, duration_days=dur_days)
+    if not plans:
+        return await callback.answer("هیچ پلنی برای این بازه زمانی یافت نشد.", show_alert=True)
+
+    icon = cat.get("icon") or "⚡"
+    title = cat.get("title", "")
+    desc = cat.get("description", "")
+    dur_lbl = duration_label(dur_days)
+
+    text = (
+        f"{icon} <b>پلن‌های اشتراک {dur_lbl} {title}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>{desc}</i>\n\n"
+        "👇 <b>لطفاً حجم ترافیک مورد نظر خود را انتخاب فرمایید:</b>"
+    )
+    await callback.message.edit_text(text, reply_markup=build_plans_keyboard(plans, cat_key, current_dur=dur_days), parse_mode="HTML")
     await callback.answer()
 
 
@@ -528,7 +654,7 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
             sub_url = created_u.get("sub_url", f"{settings.PANEL_SUB_URL}/{sub_token}")
             sub_b64 = created_u.get("sub_b64_url", f"{sub_url}/b64")
 
-            await database.save_account(
+            acc_id = await database.save_account(
                 telegram_id=telegram_id,
                 panel_username=panel_user,
                 category="v2ray",
@@ -539,31 +665,51 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="V2Ray اختصاصی",
-                panel_username=panel_user,
                 price=price,
             )
 
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="V2Ray اختصاصی",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
+
             success_text = (
-                "🎉 <b>اشتراک اختصاصی V2Ray با موفقیت صادر شد!</b>\n\n"
+                "🎉 <b>اشتراک اختصاصی V2Ray با موفقیت صادر شد!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
                 f"👤 نام کاربری در پنل: <code>{panel_user}</code>\n"
                 f"📶 حجم ترافیک: <b>{to_fa(plan.get('traffic_gb'))} گیگابایت</b>\n"
                 f"⏱ مدت اعتبار: <b>{to_fa(plan.get('duration_days'))} روز</b>\n\n"
+                "📷 <b>بارکد QR اتصال (اسکن با دوربین یا نرم‌افزار):</b>\n"
                 "🔗 <b>لینک هوشمند سابسکریپشن V2Ray:</b>\n"
                 f"<code>{sub_url}</code>\n\n"
                 "📡 <b>لینک ساب Base64 (مخصوص v2rayNG / SlipNet):</b>\n"
                 f"<code>{sub_b64}</code>\n\n"
-                "💡 این سابسکریپشن فقط شامل پروتکل‌های خالص VMess و VLESS می‌باشد."
+                "💡 <i>بارکد تصویر بالا را در کلاینت خود اسکن کرده یا لینک ساب را وارد فرمایید.</i>"
             )
-            await callback.message.edit_text(success_text, parse_mode="HTML")
+            qr_file = make_qr_code_file(sub_url, filename=f"v2ray_sub_{panel_user}.png")
+            try:
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo=qr_file,
+                    caption=success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="v2ray", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await callback.message.answer(
+                    success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="v2ray", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
 
         # ── ۲. دسته Reality (فقط اینباندهای Reality) ──
         elif proto_type == "reality":
@@ -586,7 +732,7 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
             sub_url = created_u.get("sub_url", f"{settings.PANEL_SUB_URL}/{sub_token}")
             sub_b64 = created_u.get("sub_b64_url", f"{sub_url}/b64")
 
-            await database.save_account(
+            acc_id = await database.save_account(
                 telegram_id=telegram_id,
                 panel_username=panel_user,
                 category="reality",
@@ -597,26 +743,49 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="VLESS Reality اختصاصی",
-                panel_username=panel_user,
                 price=price,
             )
 
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="VLESS Reality اختصاصی",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
+
             success_text = (
-                "🎉 <b>اشتراک اختصاصی VLESS Reality صادر شد!</b>\n\n"
+                "🎉 <b>اشتراک اختصاصی VLESS Reality صادر شد!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
                 f"👤 نام کاربری: <code>{panel_user}</code>\n"
+                f"📶 حجم ترافیک: <b>{to_fa(plan.get('traffic_gb'))} گیگابایت</b>\n"
+                f"⏱ مدت اعتبار: <b>{to_fa(plan.get('duration_days'))} روز</b>\n\n"
+                "📷 <b>بارکد QR اتصال (اسکن مستقیم با دوربین یا نرم‌افزار):</b>\n"
                 f"🔗 <b>لینک سابسکریپشن Reality:</b>\n<code>{sub_url}</code>\n\n"
-                f"📡 <b>لینک Base64:</b>\n<code>{sub_b64}</code>"
+                f"📡 <b>لینک Base64:</b>\n<code>{sub_b64}</code>\n\n"
+                "💡 <i>بارکد تصویر بالا را در نرم‌افزار اسکن کرده یا لینک ساب را وارد نمایید.</i>"
             )
-            await callback.message.edit_text(success_text, parse_mode="HTML")
+            qr_file = make_qr_code_file(sub_url, filename=f"reality_sub_{panel_user}.png")
+            try:
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo=qr_file,
+                    caption=success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="reality", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await callback.message.answer(
+                    success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="reality", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
 
         # ── ۳. دسته پروتکل‌های سیستمی مستقیم (L2TP/IKEv2) ──
         elif proto_type == "system_l2tp":
@@ -643,17 +812,21 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="پروتکل‌های سیستمی (Cisco / L2TP)",
-                panel_username=panel_user,
                 price=price,
             )
+
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="پروتکل‌های سیستمی (Cisco / L2TP)",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
 
             success_text = (
                 "🎉 <b>اشتراک پروتکل‌های استاندارد با موفقیت صادر شد!</b>\n"
@@ -704,17 +877,21 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="تانل ضد فیلتر DNS",
-                panel_username=panel_user,
                 price=price,
             )
+
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="تانل ضد فیلتر DNS",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
 
             # استخراج فوری تمامی کانفیگ‌های تانل DNS و SlipNet
             all_uris = await panel_api.get_all_dns_slipnet_uris(username=panel_user, password=panel_pass)
@@ -792,9 +969,130 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
             )
 
-        # ── ۵. دسته پروتکل اختصاصی و مدرن WireGuard ──
+        # ── ۵. دسته پروتکل فوق‌پیشرفته AmneziaWG (وایرگارد پیشرفته) ──
+        elif proto_type == "amneziawg":
+            panel_user = f"awg_{telegram_id % 100000}_{rand_suffix}"
+            res = await panel_api.create_amneziawg_account(
+                name=panel_user,
+                traffic_limit_gb=plan.get("traffic_gb", 30.0),
+                validity_days=plan.get("duration_days", 30),
+            )
+            if not res.get("success"):
+                await database.update_wallet_balance(telegram_id, price)
+                return await callback.message.edit_text(f"❌ خطا در صدور اکانت AmneziaWG:\n{api_error_text(res)}")
+
+            client_conf = sanitize_wireguard_conf(res.get("config", ""))
+            client_ip = res.get("ip", "")
+            pubkey = res.get("public_key", "")
+            sub_token = res.get("sub_token", "")
+
+            acc_id = await database.save_account(
+                telegram_id=telegram_id,
+                panel_username=panel_user,
+                panel_password=pubkey,
+                category="amneziawg",
+                plan_name=plan.get("name"),
+                server_info=client_conf,
+                sub_token=sub_token,
+                is_trial=0,
+                traffic_gb=plan.get("traffic_gb"),
+                duration_days=plan.get("duration_days"),
+                price=price,
+            )
+
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="وایرگارد پیشرفته ضد فیلتر (AmneziaWG)",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
+
+            clean_wg_fname = make_clean_wg_filename(panel_user)
+            success_text = (
+                "🎉 <b>اشتراک اختصاصی وایرگارد پیشرفته (AmneziaWG) صادر شد!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏷 پلن: <b>{plan.get('name')}</b>\n"
+                f"👤 نام کاربری: <code>{panel_user}</code>\n"
+                f"📄 نام استاندارد تانل: <code>{clean_wg_fname[:-5]}</code>\n"
+                f"🌐 آی‌پی کلاینت: <code>{client_ip}</code>\n"
+                f"📶 حجم ترافیک: <b>{to_fa(plan.get('traffic_gb'))} گیگابایت</b>\n"
+                f"⏱ مدت اعتبار: <b>{to_fa(plan.get('duration_days'))} روز</b>\n\n"
+                "🛡️ <b>ویژگی‌های AmneziaWG:</b>\n"
+                "این پروتکل مجهز به پارامترهای پیشرفته مبهم‌سازی (Obfuscation) است و پکت‌های اتصال را کاملاً از شناسایی فیلترینگ مخفی می‌سازد.\n\n"
+                "📁 <b>فایل کانفیگ .conf اصلی، بارکد QR و پکیج کامل فشرده (ZIP)</b> در پیام‌های زیر ارسال گردید."
+            )
+            await callback.message.edit_text(
+                success_text,
+                reply_markup=account_details_keyboard(acc_id, category="amneziawg"),
+                parse_mode="HTML",
+            )
+
+            # ارسال فایل .conf اصلی
+            try:
+                conf_doc = BufferedInputFile(
+                    client_conf.encode("utf-8"),
+                    filename=clean_wg_fname,
+                )
+                await callback.message.answer_document(
+                    document=conf_doc,
+                    caption=(
+                        f"📁 <b>فایل کانفیگ استاندارد AmneziaWG</b>\n"
+                        f"👤 نام کاربری: <code>{panel_user}</code>\n"
+                        f"📄 تانل: <code>{clean_wg_fname[:-5]}</code>\n\n"
+                        "💡 قابل استفاده در نرم‌افزار رسمی AmneziaVPN و AmneziaWG بدون خطای نام."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            # ارسال تصویر QR Code اختصاصی
+            try:
+                qr_photo = make_qr_code_file(client_conf, filename=f"qr_{clean_wg_fname[:-5]}.png")
+                await callback.message.answer_photo(
+                    photo=qr_photo,
+                    caption="📷 <b>بارکد اختصاصی AmneziaWG جهت اسکن مستقیم در اپلیکیشن</b>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+            # ارسال پکیج کامل تمام پورت‌ها در قالب فایل ZIP به کاربر
+            try:
+                configs = await panel_api.get_amneziawg_client_multiport(public_key=pubkey, base_conf=client_conf)
+                if configs:
+                    import zipfile
+                    zip_bio = io.BytesIO()
+                    with zipfile.ZipFile(zip_bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                        for c in configs:
+                            p = c.get("port")
+                            fname = make_clean_wg_filename(panel_user, port=p)
+                            zf.writestr(fname, c.get("config", "").encode("utf-8"))
+                    zip_bio.seek(0)
+                    zip_filename = f"{clean_wg_fname[:-5]}_awg_all_ports.zip"
+                    zip_doc = BufferedInputFile(zip_bio.getvalue(), filename=zip_filename)
+                    await callback.message.answer_document(
+                        document=zip_doc,
+                        caption=(
+                            f"📦 <b>پکیج کامل تمام پورت‌های AmneziaWG (فایل ZIP)</b>\n"
+                            f"👤 اکانت: <code>{panel_user}</code>\n"
+                            f"📊 شامل {to_fa(len(configs))} پورت مختلف و فعال جهت دور زدن قطعی‌ها\n\n"
+                            "💡 فایل زیپ را باز کرده و هر پورتی که بهترین پینگ و سرعت را داشت استفاده کنید."
+                        ),
+                        parse_mode="HTML",
+                    )
+            except Exception as e:
+                logger.error(f"Error creating and sending AWG purchase zip: {e}")
+
+        # ── ۶. دسته پروتکل اختصاصی و مدرن WireGuard ──
         elif proto_type == "wireguard":
-            panel_user = f"ms_wg_{telegram_id}_{rand_suffix}"
+            panel_user = f"wg_{telegram_id % 100000}_{rand_suffix}"
             res = await panel_api.create_wireguard_account(
                 name=panel_user,
                 traffic_limit_gb=plan.get("traffic_gb", 30.0),
@@ -804,7 +1102,7 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 await database.update_wallet_balance(telegram_id, price)
                 return await callback.message.edit_text(f"❌ خطا در صدور اکانت وایرگارد:\n{api_error_text(res)}")
 
-            client_conf = res.get("config", "")
+            client_conf = sanitize_wireguard_conf(res.get("config", ""))
             client_ip = res.get("ip", "")
             pubkey = res.get("public_key", "")
             sub_token = res.get("sub_token", "")
@@ -820,28 +1118,35 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="وایرگارد مدرن (WireGuard)",
-                panel_username=panel_user,
                 price=price,
             )
 
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="وایرگارد مدرن (WireGuard)",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
+
+            clean_wg_fname = make_clean_wg_filename(panel_user)
             success_text = (
                 "🎉 <b>اشتراک اختصاصی وایرگارد (WireGuard) با موفقیت صادر شد!</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
                 f"👤 نام کاربری: <code>{panel_user}</code>\n"
+                f"📄 نام استاندارد تانل: <code>{clean_wg_fname[:-5]}</code>\n"
                 f"🌐 آی‌پی کلاینت: <code>{client_ip}</code>\n"
                 f"📶 حجم ترافیک: <b>{to_fa(plan.get('traffic_gb'))} گیگابایت</b>\n"
                 f"⏱ مدت اعتبار: <b>{to_fa(plan.get('duration_days'))} روز</b>\n\n"
-                "⚡ فایل کانفیگ و بارکد اختصاصی QR برای شما در زیر ارسال گردید.\n"
-                "جهت مدیریت اکانت می‌توانید از دکمه‌های زیر استفاده فرمایید:"
+                "🔀 <b>پشتیبانی از پورت‌های متعدد (Multiport):</b>\n"
+                "این سرویس دارای چندین پورت فعال جهت دور زدن اختلالات است. "
+                "فایل کانفیگ و بارکد پورت اصلی در زیر ارسال شد؛ از طریق دکمه «🔀 پورت‌های اتصال» می‌توانید به سایر پورت‌ها و دانلود ZIP یکجا دسترسی داشته باشید."
             )
             await callback.message.edit_text(
                 success_text,
@@ -849,15 +1154,20 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
             )
 
-            # ارسال فایل .conf
+            # ارسال فایل .conf با نام استاندارد و محتوای بهینه‌شده
             try:
                 conf_doc = BufferedInputFile(
                     client_conf.encode("utf-8"),
-                    filename=f"MS_WireGuard_{panel_user}.conf",
+                    filename=clean_wg_fname,
                 )
                 await callback.message.answer_document(
                     document=conf_doc,
-                    caption=f"📁 <b>فایل کانفیگ اختصاصی وایرگارد</b>\n👤 <code>{panel_user}</code>",
+                    caption=(
+                        f"📁 <b>فایل کانفیگ استاندارد وایرگارد</b>\n"
+                        f"👤 نام کاربری: <code>{panel_user}</code>\n"
+                        f"📄 تانل: <code>{clean_wg_fname[:-5]}</code>\n\n"
+                        "💡 بدون خطای نام (Name Error) در کلیه کلاینت‌های رسمی اندروید، iOS و ویندوز."
+                    ),
                     parse_mode="HTML",
                 )
             except Exception:
@@ -865,14 +1175,7 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
 
             # ارسال تصویر QR Code اختصاصی
             try:
-                qr = qrcode.QRCode(box_size=8, border=3)
-                qr.add_data(client_conf)
-                qr.make(fit=True)
-                img = qr.make_image(fill_color="black", back_color="white")
-                bio = io.BytesIO()
-                img.save(bio, format="PNG")
-                bio.seek(0)
-                qr_photo = BufferedInputFile(bio.getvalue(), filename=f"wg_qr_{panel_user}.png")
+                qr_photo = make_qr_code_file(client_conf, filename=f"qr_{clean_wg_fname[:-5]}.png")
                 await callback.message.answer_photo(
                     photo=qr_photo,
                     caption="📷 <b>بارکد اختصاصی WireGuard جهت اسکن مستقیم در موبایل</b>",
@@ -921,7 +1224,7 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
             sub_url = created_u.get("sub_url", f"{settings.PANEL_SUB_URL}/{sub_token}")
             sub_b64 = created_u.get("sub_b64_url", f"{sub_url}/b64")
 
-            await database.save_account(
+            acc_id = await database.save_account(
                 telegram_id=telegram_id,
                 panel_username=panel_user,
                 category="singbox",
@@ -932,31 +1235,51 @@ async def cb_process_payment(callback: types.CallbackQuery, state: FSMContext):
                 is_trial=0,
                 traffic_gb=plan.get("traffic_gb"),
                 duration_days=plan.get("duration_days"),
-            )
-
-            await notifier.notify_admin_purchase(
-                bot=callback.bot,
-                telegram_id=telegram_id,
-                user=callback.from_user,
-                plan=plan,
-                category_title="Sing-box VIP هوشمند",
-                panel_username=panel_user,
                 price=price,
             )
 
+            try:
+                await notifier.notify_admin_purchase(
+                    bot=callback.bot,
+                    telegram_id=telegram_id,
+                    user=callback.from_user,
+                    plan=plan,
+                    category_title="Sing-box VIP هوشمند",
+                    panel_username=panel_user,
+                    price=price,
+                )
+            except Exception as e:
+                logger.error(f"Error notifying admin for purchase: {e}")
+
             success_text = (
-                "🎉 <b>خرید شما با موفقیت انجام شد و اشتراک تحویل گردید!</b>\n\n"
+                "🎉 <b>خرید شما با موفقیت انجام شد و اشتراک تحویل گردید!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷 پلن: <b>{plan.get('name')}</b>\n"
                 f"👤 نام کاربری در پنل: <code>{panel_user}</code>\n"
                 f"📶 حجم ترافیک: <b>{to_fa(plan.get('traffic_gb'))} گیگابایت</b>\n"
                 f"⏱ مدت اعتبار: <b>{to_fa(plan.get('duration_days'))} روز</b>\n\n"
+                "📷 <b>بارکد QR اتصال (اسکن مستقیم در نرم‌افزار):</b>\n"
                 "🔗 <b>لینک هوشمند سابسکریپشن:</b>\n"
                 f"<code>{sub_url}</code>\n\n"
                 "📡 <b>لینک ساب Base64 (v2rayNG / SlipNet):</b>\n"
                 f"<code>{sub_b64}</code>\n\n"
-                "💡 از بخش «📦 اکانت‌های من» می‌توانید وضعیت مصرف و انقضا را مشاهده فرمایید."
+                "💡 <i>جهت اتصال، تصویر بارکد فوق را اسکن فرمایید یا لینک ساب را در نرم‌افزار کپی و وارد کنید.</i>"
             )
-            await callback.message.edit_text(success_text, parse_mode="HTML")
+            qr_file = make_qr_code_file(sub_url, filename=f"singbox_sub_{panel_user}.png")
+            try:
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo=qr_file,
+                    caption=success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="singbox", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await callback.message.answer(
+                    success_text,
+                    reply_markup=account_details_keyboard(acc_id, category="singbox", sub_url=sub_url),
+                    parse_mode="HTML",
+                )
 
         await callback.answer("خرید با موفقیت انجام شد!")
 
@@ -1016,17 +1339,21 @@ async def cb_gas_instant_delivery(callback: types.CallbackQuery):
         is_trial=0,
         traffic_gb=plan.get("traffic_gb", 0) if plan else 0,
         duration_days=plan.get("duration_days", 30) if plan else 30,
+        price=price if "price" in locals() else (plan.get("price", 0) if plan else 0),
     )
 
-    await notifier.notify_admin_purchase(
-        bot=callback.bot,
-        telegram_id=telegram_id,
-        user=callback.from_user,
-        plan=plan or {"name": "اشتراک ابری GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
-        category_title="گوگل اسکریپت ابری (GAS تحویل فوری)",
-        panel_username=panel_user,
-        price=plan.get("price", 0) if plan else 0,
-    )
+    try:
+        await notifier.notify_admin_purchase(
+            bot=callback.bot,
+            telegram_id=telegram_id,
+            user=callback.from_user,
+            plan=plan or {"name": "اشتراک ابری GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
+            category_title="گوگل اسکریپت ابری (GAS تحویل فوری)",
+            panel_username=panel_user,
+            price=plan.get("price", 0) if plan else 0,
+        )
+    except Exception as e:
+        logger.error(f"Error notifying admin for purchase: {e}")
 
     success_text = (
         "🎉 <b>اشتراک ابری گوگل اسکریپت و کلودفلر (GAS) با موفقیت تحویل داده شد!</b>\n"
@@ -1183,17 +1510,21 @@ async def _finalize_gas_deployment(message_or_target: types.Message, state: FSMC
         is_trial=0,
         traffic_gb=plan.get("traffic_gb", 0) if plan else 0,
         duration_days=plan.get("duration_days", 30) if plan else 30,
+        price=price if "price" in locals() else (plan.get("price", 0) if plan else 0),
     )
 
-    await notifier.notify_admin_purchase(
-        bot=message_or_target.bot,
-        telegram_id=user_id,
-        user=message_or_target.from_user,
-        plan=plan or {"name": "اشتراک اختصاصی GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
-        category_title="گوگل اسکریپت ابری (GAS استقرار)",
-        panel_username=panel_user,
-        price=plan.get("price", 0) if plan else 0,
-    )
+    try:
+        await notifier.notify_admin_purchase(
+            bot=message_or_target.bot,
+            telegram_id=user_id,
+            user=message_or_target.from_user,
+            plan=plan or {"name": "اشتراک اختصاصی GAS", "price": 0, "traffic_gb": 0, "duration_days": 30},
+            category_title="گوگل اسکریپت ابری (GAS استقرار)",
+            panel_username=panel_user,
+            price=plan.get("price", 0) if plan else 0,
+        )
+    except Exception as e:
+        logger.error(f"Error notifying admin for purchase: {e}")
 
     success_text = (
         "🎉 <b>پروژه اختصاصی گوگل اسکریپت با موفقیت Deploy شد!</b>\n"

@@ -3,6 +3,7 @@ from aiogram import Router
 
 from handlers import (
     admin,
+    admin_channels,
     auth,
     profile,
     accounts,
@@ -20,6 +21,7 @@ def get_main_router() -> Router:
 
     # روتر مدیریت برای پاسخ به دستورات و کال‌بک‌های ادمین
     main.include_router(admin.router)
+    main.include_router(admin_channels.router)
 
     # روترهای اصلی کاربر
     main.include_router(auth.router)

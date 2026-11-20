@@ -53,29 +53,46 @@ async def toggle_trial_notification() -> bool:
     return new_val == "1"
 
 
+def _extract_user_fields(u: Any) -> tuple:
+    username = ""
+    first_name = ""
+    if u is not None:
+        if isinstance(u, dict):
+            username = u.get("username") or ""
+            first_name = u.get("first_name") or ""
+        else:
+            username = getattr(u, "username", None) or ""
+            first_name = getattr(u, "first_name", None) or ""
+    return username or "—", first_name or "کاربر"
+
+
 async def notify_admin_purchase(
     bot: Bot,
     telegram_id: int,
-    user_info: Optional[Dict[str, Any]],
-    plan: Dict[str, Any],
-    category_title: str,
-    panel_username: str,
-    price: int,
-):
+    user_info: Optional[Any] = None,
+    user: Optional[Any] = None,
+    plan: Optional[Dict[str, Any]] = None,
+    category_title: str = "",
+    panel_username: str = "",
+    price: int = 0,
+    **kwargs: Any,
+) -> int:
     """ارسال اعلان آنی و زنده خرید اشتراک به کلیه مدیران ربات."""
     try:
         if not await is_purchase_notification_enabled():
-            return
+            return 0
 
         admin_ids = await get_all_admin_telegram_ids()
         if not admin_ids:
-            return
+            return 0
 
-        username = (user_info.get("username") if user_info else "") or "—"
-        first_name = (user_info.get("first_name") if user_info else "") or "کاربر"
-        plan_name = plan.get("name", "پلن نامشخص")
-        traffic_gb = plan.get("traffic_gb", 0)
-        duration_days = plan.get("duration_days", 0)
+        target_user = user if user is not None else user_info
+        username, first_name = _extract_user_fields(target_user)
+
+        plan_dict = plan or {}
+        plan_name = plan_dict.get("name", "پلن نامشخص")
+        traffic_gb = kwargs.get("traffic_gb", plan_dict.get("traffic_gb", 0))
+        duration_days = kwargs.get("duration_days", plan_dict.get("duration_days", 0))
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         text = (
@@ -110,23 +127,25 @@ async def notify_admin_purchase(
 async def notify_admin_trial(
     bot: Bot,
     telegram_id: int,
-    user_info: Optional[Dict[str, Any]],
-    mode: str,
-    trial_gb: float,
-    trial_days: int,
-    res: Dict[str, Any],
-):
+    user_info: Optional[Any] = None,
+    user: Optional[Any] = None,
+    mode: str = "",
+    trial_gb: float = 0.0,
+    trial_days: int = 0,
+    res: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> int:
     """ارسال اعلان آنی و زنده دریافت اکانت تستی به کلیه مدیران ربات."""
     try:
         if not await is_trial_notification_enabled():
-            return
+            return 0
 
         admin_ids = await get_all_admin_telegram_ids()
         if not admin_ids:
-            return
+            return 0
 
-        username = (user_info.get("username") if user_info else "") or "—"
-        first_name = (user_info.get("first_name") if user_info else "") or "کاربر"
+        target_user = user if user is not None else user_info
+        username, first_name = _extract_user_fields(target_user)
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         mode_labels = {
@@ -138,18 +157,19 @@ async def notify_admin_trial(
         }
         mode_str = mode_labels.get(mode, mode)
 
+        res_dict = res or {}
         unames = []
         if mode == "all":
-            sb_u = res.get("singbox", {}).get("username")
-            sys_u = res.get("system_l2tp", {}).get("username")
-            wg_u = res.get("wireguard", {}).get("username")
-            dns_u = res.get("dnstt", {}).get("username")
+            sb_u = res_dict.get("singbox", {}).get("username")
+            sys_u = res_dict.get("system_l2tp", {}).get("username")
+            wg_u = res_dict.get("wireguard", {}).get("username")
+            dns_u = res_dict.get("dnstt", {}).get("username")
             if sb_u: unames.append(f"Singbox: {sb_u}")
             if sys_u: unames.append(f"L2TP: {sys_u}")
             if wg_u: unames.append(f"WG: {wg_u}")
             if dns_u: unames.append(f"DNS: {dns_u}")
         else:
-            u = res.get("username")
+            u = res_dict.get("username")
             if u: unames.append(u)
 
         uname_text = "\n".join([f"▫️ <code>{u}</code>" for u in unames]) if unames else "—"

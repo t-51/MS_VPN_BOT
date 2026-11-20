@@ -44,6 +44,13 @@ class AdminPlanStates(StatesGroup):
     waiting_price = State()
 
 
+class AdminPlanEditStates(StatesGroup):
+    waiting_name = State()
+    waiting_traffic = State()
+    waiting_days = State()
+    waiting_price = State()
+
+
 # ── پنل مدیریت: ارسال پیام همگانی (Broadcast) ───────────────
 class AdminBroadcastStates(StatesGroup):
     waiting_message = State()
@@ -81,4 +88,45 @@ class AdminManageStates(StatesGroup):
 class AdminTutorialStates(StatesGroup):
     waiting_tutorial_text = State()
     waiting_download_url = State()
+
+
+# ── استعلام و جستجوی کانفیگ با شناسه (UID / UUID) ─────────────
+class ConfigSearchStates(StatesGroup):
+    waiting_uid = State()
+
+
+# ── هدیه و انتقال کانفیگ به کاربر دیگر ───────────────────────
+class AccountGiftStates(StatesGroup):
+    waiting_target_user = State()
+
+
+# ── پنل مدیریت: ارسال خودکار کانفیگ به کانال مقصد ───────────
+class AdminAutoChannelStates(StatesGroup):
+    waiting_channel_id = State()
+    waiting_times = State()
+    waiting_traffic = State()
+    waiting_days = State()
+    waiting_caption = State()
+
+
+# ── پنل مدیریت: قفل عضویت اجباری (Force Join) ────────────────
+class AdminForceJoinStates(StatesGroup):
+    waiting_channel_title = State()
+    waiting_channel_id = State()
+    waiting_invite_link = State()
+
+
+# ── پنل مدیریت: قفل سین / مشاهده پست (Seen Lock) ────────────
+class AdminSeenLockStates(StatesGroup):
+    waiting_post_url = State()
+    waiting_lock_text = State()
+
+
+# ── مدیریت نام دلخواه و پوشه‌ها / دسته‌بندی‌های شخصی کاربر ────────
+class UserAccountManageStates(StatesGroup):
+    waiting_account_name = State()
+    waiting_new_category_name = State()
+    waiting_rename_category = State()
+
+
 

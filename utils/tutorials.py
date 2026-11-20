@@ -36,6 +36,12 @@ CLIENT_DOWNLOADS = {
     "wireguard_macos": "https://apps.apple.com/us/app/wireguard/id1451685025",
     "wireguard_linux": "https://www.wireguard.com/install/",
 
+    # وایرگارد پیشرفته (AmneziaWG)
+    "amnezia_android": "https://play.google.com/store/apps/details?id=org.amnezia.vpn",
+    "amnezia_awg_android": "https://play.google.com/store/apps/details?id=org.amnezia.awg",
+    "amnezia_ios": "https://apps.apple.com/us/app/amnezia-vpn/id1600529900",
+    "amnezia_windows": "https://github.com/amnezia-vpn/amnezia-client/releases",
+
     # گوگل اسکریپت و کلودفلر (GAS / Goose / Sing-box)
     "goose_github": "https://github.com/mhrv-rs/goose-vpn/releases",
     "singbox_desktop": "https://github.com/SagerNet/sing-box/releases",
@@ -49,6 +55,19 @@ TUTORIALS = {
         "━━━━━━━━━━━━━━━━━━━━\n"
         "برای مشاهده آموزش گام‌به‌گام اتصال و لینک دانلود مستقیم نرم‌افزارها، "
         "سیستم‌عامل دستگاه یا پروتکل مورد نظر خود را انتخاب فرمایید:"
+    ),
+
+    "amneziawg": (
+        "🛡️ <b>راهنمای اتصال وایرگارد پیشرفته ضد فیلتر (AmneziaWG)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "پروتکل <b>AmneziaWG</b> نسخه توسعه‌یافته و آنتی‌فیلتر وایرگارد است که با افزودن پارامترهای مبهم‌سازی (Obfuscation)، سربرگ‌ها و بسته‌های اتصال را به گونه‌ای تغییر می‌دهد که فیلترینگ هوشمند قادر به شناسایی آن نیست.\n\n"
+        "📱 <b>روش ۱: اتصال از طریق اسکن بارکد QR در گوشی (پیشنهادی)</b>\n"
+        "۱. نرم‌افزار رسمی <b>AmneziaWG</b> یا <b>AmneziaVPN</b> را از Google Play یا App Store نصب نمایید.\n"
+        "۲. در ربات وارد منوی «📦 اکانت‌های من» شوید، روی اکانت AmneziaWG کلیک کنید و دکمه <b>«📷 دریافت بارکد QR»</b> را لمس کنید.\n"
+        "۳. در اپلیکیشن علامت + را لمس کرده و گزینه <b>«Scan from QR code»</b> را انتخاب و بارکد را اسکن فرمایید.\n\n"
+        "📁 <b>روش ۲: استفاده از فایل ZIP و پورت‌های چندگانه</b>\n"
+        "۱. فایل زیپ ارسالی ربات را دانلود کرده و استخراج نمایید.\n"
+        "۲. فایل‌های <code>.conf</code> داخل آن را وارد نرم‌افزار نمایید. هر پورتی که بهترین پینگ را داشت متصل شوید."
     ),
 
     "wireguard": (
@@ -303,6 +322,19 @@ PROTO_APP_GUIDES = {
         "💻 <b>ویندوز:</b> v2rayN (پیشنهادی)، Nekoray، Hiddify Next\n"
         "🖥️ <b>مک:</b> V2Box، FoXray، Sing-box\n"
         "🐧 <b>لینوکس:</b> باینری رسمی sing-box"
+    ),
+
+    "amneziawg": (
+        "🛡️ <b>راهنمای اتصال وایرگارد پیشرفته ضد فیلتر (AmneziaWG)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "پروتکل <b>AmneziaWG</b> نسخه توسعه‌یافته و آنتی‌فیلتر وایرگارد است که با افزودن پارامترهای مبهم‌سازی (Obfuscation)، سربرگ‌ها و بسته‌های اتصال را به گونه‌ای تغییر می‌دهد که فیلترینگ هوشمند قادر به شناسایی آن نیست.\n\n"
+        "📱 <b>روش ۱: اتصال از طریق اسکن بارکد QR در گوشی (پیشنهادی)</b>\n"
+        "۱. نرم‌افزار رسمی <b>AmneziaWG</b> یا <b>AmneziaVPN</b> را از Google Play یا App Store نصب نمایید.\n"
+        "۲. در ربات وارد منوی «📦 اکانت‌های من» شوید، روی اکانت AmneziaWG کلیک کنید و دکمه <b>«📷 دریافت بارکد QR»</b> را لمس کنید.\n"
+        "۳. در اپلیکیشن علامت + را لمس کرده و گزینه <b>«Scan from QR code»</b> را انتخاب و بارکد را اسکن فرمایید.\n\n"
+        "📁 <b>روش ۲: استفاده از فایل ZIP و پورت‌های چندگانه</b>\n"
+        "۱. فایل زیپ ارسالی ربات را دانلود کرده و استخراج نمایید.\n"
+        "۲. فایل‌های <code>.conf</code> داخل آن را وارد نرم‌افزار نمایید. هر پورتی که بهترین پینگ را داشت متصل شوید."
     ),
 
     "wireguard": (

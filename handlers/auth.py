@@ -114,3 +114,74 @@ async def cb_menu_home(callback: types.CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+# ── هندلرهای تایید عضویت اجباری و قفل سین ───────────────────
+
+@router.callback_query(F.data == "seen:confirm")
+async def cb_seen_confirm(callback: types.CallbackQuery):
+    """تایید مشاهده پست اسپانسر توسط کاربر و ثبت در دیتابیس."""
+    from utils.force_join import check_user_membership, build_force_join_keyboard, get_force_join_message_text
+
+    user_id = callback.from_user.id
+    seen_settings = await database.get_seen_lock_settings()
+    post_url = seen_settings.get("post_url", "").strip()
+
+    if post_url:
+        await database.record_user_seen(user_id, post_url)
+
+    is_allowed, unjoined_channels, seen_needed, seen_settings = await check_user_membership(callback.bot, user_id)
+    if is_allowed:
+        await callback.answer("✅ مشاهده پست و عضویت شما تایید گردید!", show_alert=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        kb = get_main_keyboard(settings.is_admin(user_id))
+        return await callback.message.answer(
+            "🎉 <b>قفل ربات با موفقیت باز شد!</b>\nاکنون می‌توانید از تمامی امکانات و اشتراک‌ها استفاده فرمایید:",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+
+    await callback.answer("✅ مشاهده پست تایید شد، اما هنوز در کانال‌های تعیین‌شده عضو نشده‌اید.", show_alert=True)
+    text = get_force_join_message_text(unjoined_channels, seen_needed, seen_settings)
+    new_kb = build_force_join_keyboard(unjoined_channels, seen_needed, seen_settings)
+    try:
+        await callback.message.edit_text(text, reply_markup=new_kb, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "check_fsub")
+async def cb_check_fsub(callback: types.CallbackQuery):
+    """بررسی مجدد وضعیت عضویت کاربر در کانال‌ها و وضعیت قفل سین."""
+    from utils.force_join import check_user_membership, build_force_join_keyboard, get_force_join_message_text
+
+    user_id = callback.from_user.id
+    is_allowed, unjoined_channels, seen_needed, seen_settings = await check_user_membership(callback.bot, user_id)
+
+    if is_allowed:
+        await callback.answer("✅ عضویت شما با موفقیت تأیید شد. خوش آمدید!", show_alert=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        kb = get_main_keyboard(settings.is_admin(user_id))
+        return await callback.message.answer(
+            "🎉 <b>خوش آمدید! قفل ربات با موفقیت باز شد.</b>\nلطفاً از منوی زیر گزینه‌ی مورد نظر خود را انتخاب کنید:",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+
+    await callback.answer(
+        "❌ شما هنوز در تمامی کانال‌ها عضو نشده‌اید یا پست را تایید نکرده‌اید! لطفاً ابتدا اقدام نمایید.",
+        show_alert=True,
+    )
+    text = get_force_join_message_text(unjoined_channels, seen_needed, seen_settings)
+    new_kb = build_force_join_keyboard(unjoined_channels, seen_needed, seen_settings)
+    try:
+        await callback.message.edit_text(text, reply_markup=new_kb, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        pass
+

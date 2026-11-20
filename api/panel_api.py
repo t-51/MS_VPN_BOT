@@ -149,6 +149,269 @@ async def delete_wireguard_account(public_key: str) -> Dict[str, Any]:
     return await client.post("wireguard/client/delete", data={"public_key": public_key})
 
 
+async def renew_wireguard_account(public_key: str, days: int = 30, reset_traffic: bool = True) -> Dict[str, Any]:
+    """تمدید مهلت اعتبار کلاینت وایرگارد و صفر کردن ترافیک مصرفی."""
+    payload = {
+        "public_key": public_key,
+        "days": int(days),
+        "reset_traffic": bool(reset_traffic),
+    }
+    return await client.post("wireguard/client/renew", data=payload)
+
+
+async def edit_wireguard_account(
+    public_key: str,
+    name: str = "",
+    limit_gb: Optional[float] = None,
+    expire_days: Optional[int] = None,
+    active: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """ویرایش نام، سقف حجم و روزهای اعتبار کلاینت وایرگارد."""
+    payload: Dict[str, Any] = {"public_key": public_key}
+    if name:
+        payload["name"] = clean_username(name)
+    if limit_gb is not None:
+        payload["limit_gb"] = float(limit_gb)
+    if expire_days is not None:
+        payload["expire_days"] = int(expire_days)
+    if active is not None:
+        payload["active"] = bool(active)
+    return await client.post("wireguard/client/edit", data=payload)
+
+
+async def get_wireguard_multiport_status() -> Dict[str, Any]:
+    """دریافت وضعیت و پورت‌های چندگانه وایرگارد از پنل."""
+    res = await client.get("wireguard/multiport")
+    if isinstance(res, dict) and res.get("success"):
+        return res
+    return {"enabled": True, "ports": [904], "target_port": 904}
+
+
+async def get_wireguard_client_multiport(public_key: str, base_conf: str = "") -> List[Dict[str, Any]]:
+    """دریافت یا بازتولید تمام کانفیگ‌های پورت‌های مختلف وایرگارد برای یک کاربر."""
+    from utils.helpers import sanitize_wireguard_conf
+
+    pubkey_clean = (public_key or "").strip()
+    if pubkey_clean:
+        res = await client.get("wireguard/client/multiport", params={"public_key": pubkey_clean})
+        if isinstance(res, dict) and res.get("success") and res.get("configs"):
+            configs = []
+            for c in res["configs"]:
+                p = c.get("port")
+                cfg = sanitize_wireguard_conf(c.get("config", ""), port=p)
+                configs.append({
+                    "port": p,
+                    "endpoint": c.get("endpoint", ""),
+                    "config": cfg,
+                    "is_main": bool(c.get("is_main")),
+                })
+            return configs
+
+    # حالت فال‌بک در صورت عدم ذخیره در حافظه پنل
+    mp_info = await get_wireguard_multiport_status()
+    ports = mp_info.get("ports", [904])
+    target = mp_info.get("target_port") or (ports[0] if ports else 904)
+    if not base_conf:
+        return []
+
+    configs = []
+    for p in ports:
+        cfg = sanitize_wireguard_conf(base_conf, port=p)
+        ep_m = re.search(r'^\s*Endpoint\s*=\s*([^\s:]+)', cfg, flags=re.MULTILINE)
+        ep = f"{ep_m.group(1)}:{p}" if ep_m else str(p)
+        configs.append({
+            "port": p,
+            "endpoint": ep,
+            "config": cfg,
+            "is_main": (p == target),
+        })
+    return configs
+
+
+async def get_wireguard_peer_details(identifier: str) -> Optional[Dict[str, Any]]:
+    """دریافت جزئیات و آمار مصرف زنده یک پیر وایرگارد بر اساس کلید عمومی یا نام کاربری."""
+    from utils.helpers import format_bytes
+    peers = await get_wireguard_peers()
+    ident = (identifier or "").strip().replace(" ", "+")
+    for p in peers:
+        pk = (p.get("public_key") or "").strip().replace(" ", "+")
+        name = (p.get("name") or "").strip()
+        if (ident and pk == ident) or (ident and name == ident):
+            total_usage = p.get("total_usage", p.get("rx", 0) + p.get("tx", 0))
+            limit_gb = p.get("limit_gb")
+            limit_gb_val = float(limit_gb) if limit_gb else 0.0
+            limit_bytes = limit_gb_val * (1024 ** 3) if limit_gb_val > 0 else 0
+            used_pct = round((total_usage / limit_bytes * 100), 1) if limit_bytes > 0 else 0.0
+            rem_bytes = max(0, limit_bytes - total_usage) if limit_bytes > 0 else 0
+            return {
+                "success": True,
+                "name": name,
+                "public_key": pk,
+                "ip": p.get("ip", ""),
+                "active": p.get("active", True),
+                "status": p.get("status", "active"),
+                "expire_date": p.get("expire_date"),
+                "total_usage_bytes": total_usage,
+                "limit_bytes": limit_bytes,
+                "limit_gb": limit_gb_val,
+                "used_traffic_formatted": format_bytes(total_usage),
+                "remaining_traffic_formatted": format_bytes(rem_bytes) if limit_bytes > 0 else "نامحدود",
+                "traffic_limit_formatted": f"{limit_gb_val} GB" if limit_gb_val > 0 else "نامحدود",
+                "traffic_percent": used_pct,
+            }
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+#  وایرگارد پیشرفته ضد فیلتر (AmneziaWG)
+# ──────────────────────────────────────────────────────────────
+
+async def get_amneziawg_peers() -> List[Dict[str, Any]]:
+    """دریافت لیست پیرها و اکانت‌های AmneziaWG از پنل MHPanel."""
+    res = await client.get("amneziawg/peers")
+    if isinstance(res, list):
+        return res
+    if isinstance(res, dict) and "data" in res and isinstance(res["data"], list):
+        return res["data"]
+    return []
+
+
+async def create_amneziawg_account(
+    name: str,
+    traffic_limit_gb: float = 30.0,
+    validity_days: int = 30,
+    simultaneous_use: int = 1,
+) -> Dict[str, Any]:
+    """ساخت کلاینت جدید AmneziaWG در پنل MHPanel و دریافت کانفیگ اختصاصی ضد فیلتر."""
+    safe_name = clean_username(name)
+    payload = {
+        "name": safe_name,
+        "limit_gb": float(traffic_limit_gb) if traffic_limit_gb > 0 else None,
+        "expire_days": int(validity_days) if validity_days > 0 else None,
+        "start_on_first_connect": False,
+        "simultaneous_use": simultaneous_use,
+    }
+    return await client.post("amneziawg/client", data=payload)
+
+
+async def delete_amneziawg_account(public_key: str) -> Dict[str, Any]:
+    """حذف کلاینت AmneziaWG بر اساس کلید عمومی."""
+    return await client.post("amneziawg/client/delete", data={"public_key": public_key})
+
+
+async def renew_amneziawg_account(public_key: str, days: int = 30, reset_traffic: bool = True) -> Dict[str, Any]:
+    """تمدید مهلت اعتبار کلاینت AmneziaWG و صفر کردن ترافیک مصرفی."""
+    payload = {
+        "public_key": public_key,
+        "days": int(days),
+        "reset_traffic": bool(reset_traffic),
+    }
+    return await client.post("amneziawg/client/renew", data=payload)
+
+
+async def edit_amneziawg_account(
+    public_key: str,
+    name: str = "",
+    limit_gb: Optional[float] = None,
+    expire_days: Optional[int] = None,
+    active: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """ویرایش نام، سقف حجم و روزهای اعتبار کلاینت AmneziaWG."""
+    payload: Dict[str, Any] = {"public_key": public_key}
+    if name:
+        payload["name"] = clean_username(name)
+    if limit_gb is not None:
+        payload["limit_gb"] = float(limit_gb)
+    if expire_days is not None:
+        payload["expire_days"] = int(expire_days)
+    if active is not None:
+        payload["active"] = bool(active)
+    return await client.post("amneziawg/client/edit", data=payload)
+
+
+async def get_amneziawg_multiport_status() -> Dict[str, Any]:
+    """دریافت وضعیت و پورت‌های چندگانه AmneziaWG از پنل."""
+    res = await client.get("amneziawg/multiport")
+    if isinstance(res, dict) and res.get("success"):
+        return res
+    return {"enabled": True, "ports": [443], "target_port": 443}
+
+
+async def get_amneziawg_client_multiport(public_key: str, base_conf: str = "") -> List[Dict[str, Any]]:
+    """دریافت یا بازتولید تمام کانفیگ‌های پورت‌های مختلف AmneziaWG برای یک کاربر."""
+    from utils.helpers import sanitize_wireguard_conf
+
+    pubkey_clean = (public_key or "").strip()
+    if pubkey_clean:
+        res = await client.get("amneziawg/client/multiport", params={"public_key": pubkey_clean})
+        if isinstance(res, dict) and res.get("success") and res.get("configs"):
+            configs = []
+            for c in res["configs"]:
+                p = c.get("port")
+                cfg = sanitize_wireguard_conf(c.get("config", ""), port=p)
+                configs.append({
+                    "port": p,
+                    "endpoint": c.get("endpoint", ""),
+                    "config": cfg,
+                    "is_main": bool(c.get("is_main")),
+                })
+            return configs
+
+    # حالت فال‌بک
+    mp_info = await get_amneziawg_multiport_status()
+    ports = mp_info.get("ports", [443])
+    target = mp_info.get("target_port") or (ports[0] if ports else 443)
+    if not base_conf:
+        return []
+
+    configs = []
+    for p in ports:
+        cfg = sanitize_wireguard_conf(base_conf, port=p)
+        ep_m = re.search(r'^\s*Endpoint\s*=\s*([^\s:]+)', cfg, flags=re.MULTILINE)
+        ep = f"{ep_m.group(1)}:{p}" if ep_m else str(p)
+        configs.append({
+            "port": p,
+            "endpoint": ep,
+            "config": cfg,
+            "is_main": (p == target),
+        })
+    return configs
+
+
+async def get_amneziawg_peer_details(identifier: str) -> Optional[Dict[str, Any]]:
+    """دریافت جزئیات و آمار مصرف زنده یک پیر AmneziaWG بر اساس کلید عمومی یا نام کاربری."""
+    from utils.helpers import format_bytes
+    peers = await get_amneziawg_peers()
+    ident = (identifier or "").strip().replace(" ", "+")
+    for p in peers:
+        pk = (p.get("public_key") or "").strip().replace(" ", "+")
+        name = (p.get("name") or "").strip()
+        if (ident and pk == ident) or (ident and name == ident):
+            total_usage = p.get("total_usage", p.get("rx", 0) + p.get("tx", 0))
+            limit_gb = p.get("limit_gb")
+            limit_gb_val = float(limit_gb) if limit_gb else 0.0
+            limit_bytes = limit_gb_val * (1024 ** 3) if limit_gb_val > 0 else 0
+            used_pct = round((total_usage / limit_bytes * 100), 1) if limit_bytes > 0 else 0.0
+            rem_bytes = max(0, limit_bytes - total_usage) if limit_bytes > 0 else 0
+            return {
+                "success": True,
+                "name": name,
+                "public_key": pk,
+                "ip": p.get("ip", ""),
+                "active": p.get("active", True),
+                "status": p.get("status", "active"),
+                "expire_date": p.get("expire_date"),
+                "total_usage_bytes": total_usage,
+                "limit_bytes": limit_bytes,
+                "limit_gb": limit_gb_val,
+                "used_traffic_formatted": format_bytes(total_usage),
+                "remaining_traffic_formatted": format_bytes(rem_bytes) if limit_bytes > 0 else "نامحدود",
+                "traffic_limit_formatted": f"{limit_gb_val} GB" if limit_gb_val > 0 else "نامحدود",
+                "traffic_percent": used_pct,
+            }
+    return None
+
+
 # ──────────────────────────────────────────────────────────────
 #  سرویس تونل گوگل اسکریپت و کلودفلر (GAS / Workers)
 # ──────────────────────────────────────────────────────────────

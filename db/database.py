@@ -89,9 +89,38 @@ async def init_db() -> None:
                 is_trial        INTEGER DEFAULT 0,
                 traffic_gb      REAL DEFAULT 0,
                 duration_days   INTEGER DEFAULT 0,
+                uuid            TEXT,
+                custom_name     TEXT,
+                user_category_id INTEGER,
+                price           INTEGER DEFAULT 0,
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+
+        for col, col_t in [
+            ("uuid", "TEXT"),
+            ("custom_name", "TEXT"),
+            ("user_category_id", "INTEGER"),
+            ("price", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE accounts ADD COLUMN {col} {col_t}")
+            except Exception:
+                pass
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_categories (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id     INTEGER NOT NULL,
+                name            TEXT NOT NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_categories_tg ON user_categories(telegram_id)"
         )
 
         await db.execute(
@@ -178,6 +207,30 @@ async def init_db() -> None:
             """
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS force_join_channels (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                title           TEXT NOT NULL,
+                channel_id      TEXT NOT NULL,
+                invite_link     TEXT,
+                is_active       INTEGER DEFAULT 1,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_seen_locks (
+                telegram_id     INTEGER,
+                post_url        TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (telegram_id, post_url)
+            )
+            """
+        )
+
         # درج ادمین‌های ثابت در صورت عدم وجود
         for adm in settings.ADMIN_IDS:
             await db.execute("INSERT OR IGNORE INTO bot_admins (telegram_id, added_by) VALUES (?, 0)", (adm,))
@@ -218,6 +271,20 @@ async def init_db() -> None:
             ("dnstt_pubkey", settings.DNSTT_PUBKEY),
             ("card_number", settings.CARD_NUMBER),
             ("card_holder", settings.CARD_HOLDER),
+            ("force_join_enabled", "0"),
+            ("seen_lock_enabled", "0"),
+            ("seen_lock_post_url", ""),
+            ("seen_lock_text", "جهت استفاده از خدمات ربات، لطفاً از پست اسپانسر دیدن کرده و دکمه تایید مشاهده را لمس نمایید."),
+            ("auto_channel_enabled", "0"),
+            ("auto_channel_id", ""),
+            ("auto_channel_days", "sat,sun,mon,tue,wed,thu,fri"),
+            ("auto_channel_times", "12:00,20:00"),
+            ("auto_channel_traffic_gb", "1.0"),
+            ("auto_channel_duration_days", "1"),
+            ("auto_channel_protocol", "singbox"),
+            ("auto_channel_send_qr", "1"),
+            ("auto_channel_caption", ""),
+            ("auto_channel_last_sent", ""),
         ]
         for k, v in default_settings:
             await db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
@@ -238,65 +305,86 @@ async def init_db() -> None:
                     default_cats,
                 )
 
-        # اطمینان از وجود دسته‌های جدید وایرگارد و گوگل اسکریپت در پایگاه داده‌های موجود
+        # اطمینان از وجود دسته‌های جدید وایرگارد، وایرگارد پیشرفته و گوگل اسکریپت
         await db.execute(
             """
             INSERT OR IGNORE INTO categories (key, title, description, protocol_type, icon, is_active, sort_order)
-            VALUES ('wireguard', 'وایرگارد مدرن (WireGuard)', 'پروتکل پرسرعت، کم‌پینگ و سبک با فایل .conf اختصاصی و بارکد QR', 'wireguard', '⚡', 1, 4)
+            VALUES ('amneziawg', 'وایرگارد پیشرفته ضد فیلتر (AmneziaWG)', 'پروتکل فوق‌پیشرفته ضد فیلتر با متدهای پیشرفته مبهم‌سازی داده، پکیج اختصاصی تمام پورت‌ها (فایل ZIP) و کم‌ترین پینگ', 'amneziawg', '🛡️', 1, 2)
             """
         )
         await db.execute(
             """
             INSERT OR IGNORE INTO categories (key, title, description, protocol_type, icon, is_active, sort_order)
-            VALUES ('gas', 'گوگل اسکریپت و کلودفلر (GAS / Workers)', 'تونل نامحدود بر بستر سرورهای ابری گوگل و ورکر کلودفلر (ضد فیلتر پایدار)', 'gas', '☁️', 1, 5)
+            VALUES ('wireguard', 'وایرگارد معمولی (WireGuard)', 'پروتکل استاندارد و پرسرعت وایرگارد با فایل .conf اختصاصی و بارکد QR', 'wireguard', '⚡', 1, 3)
+            """
+        )
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO categories (key, title, description, protocol_type, icon, is_active, sort_order)
+            VALUES ('gas', 'گوگل اسکریپت و کلودفلر (GAS / Workers)', 'تونل نامحدود بر بستر سرورهای ابری گوگل و ورکر کلودفلر (ضد فیلتر پایدار)', 'gas', '☁️', 1, 6)
             """
         )
 
-        # درج پلن‌های پیش‌فرض WireGuard در صورت عدم وجود
-        async with db.execute("SELECT COUNT(*) FROM plans WHERE category_key = 'wireguard'") as cur:
-            wg_cnt = (await cur.fetchone())[0]
-            if wg_cnt == 0:
-                wg_plans = [
-                    ("wireguard", "پلن ۱ ماهه وایرگارد (۳۰ گیگابایت)", 30.0, 30, 70000, 1),
-                    ("wireguard", "پلن ۱ ماهه وایرگارد (۶۰ گیگابایت)", 60.0, 30, 110000, 1),
-                    ("wireguard", "پلن ۲ ماهه وایرگارد (۱۰۰ گیگابایت)", 100.0, 60, 180000, 1),
-                ]
-                await db.executemany(
-                    "INSERT INTO plans (category_key, name, traffic_gb, duration_days, price, is_active) VALUES (?, ?, ?, ?, ?, ?)",
-                    wg_plans,
-                )
-
-        # درج پلن‌های پیش‌فرض GAS در صورت عدم وجود
-        async with db.execute("SELECT COUNT(*) FROM plans WHERE category_key = 'gas'") as cur:
-            gas_cnt = (await cur.fetchone())[0]
-            if gas_cnt == 0:
-                gas_plans = [
-                    ("gas", "اشتراک ۱ ماهه اختصاصی گوگل اسکریپت (ترافیک نامحدود)", 0.0, 30, 85000, 1),
-                    ("gas", "اشتراک ۳ ماهه اختصاصی گوگل اسکریپت (ترافیک نامحدود)", 0.0, 90, 220000, 1),
-                ]
-                await db.executemany(
-                    "INSERT INTO plans (category_key, name, traffic_gb, duration_days, price, is_active) VALUES (?, ?, ?, ?, ?, ?)",
-                    gas_plans,
-                )
-
-        # درج پلن‌های پیش‌فرض
+        # درج پلن‌های پیش‌فرض در صورت عدم وجود
         async with db.execute("SELECT COUNT(*) FROM plans") as cur:
             p_cnt = (await cur.fetchone())[0]
             if p_cnt == 0:
-                init_plans = [
-                    # دسته سینگ‌باکس و V2Ray کامل
-                    ("singbox", "پلن ۱ ماهه Singbox / V2Ray (۳۰ گیگابایت)", 30.0, 30, 65000, 1),
-                    ("singbox", "پلن ۱ ماهه Singbox / V2Ray (۵۰ گیگابایت)", 50.0, 30, 95000, 1),
-                    ("singbox", "پلن ۱ ماهه Singbox / V2Ray (۱۰۰ گیگابایت)", 100.0, 30, 160000, 1),
-                    ("singbox", "پلن ۲ ماهه اقتصادی Singbox / V2Ray (۸۰ گیگابایت)", 80.0, 60, 145000, 1),
-                    # دسته پروتکل‌های سیستمی L2TP
-                    ("system_l2tp", "اکانت سیستمی ۱ ماهه (۳۰ گیگ) - L2TP/IKEv2", 30.0, 30, 55000, 1),
-                    ("system_l2tp", "اکانت سیستمی ۱ ماهه (۶۰ گیگ) - L2TP/IKEv2", 60.0, 30, 85000, 1),
-                    ("system_l2tp", "اکانت سیستمی ۲ ماهه (۱۰۰ گیگ) - L2TP/IKEv2", 100.0, 60, 140000, 1),
-                    # دسته تانل DNS
+                init_plans = []
+                traffic_tiers = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 120]
+                duration_tiers = [(1, 30), (2, 60), (3, 90)]
+
+                # پروتکل‌های استاندارد (Cisco / OpenVPN / L2TP / IKEv2 / SSH / SSTP) - ۴,۰۰۰ تومان به ازای هر گیگابایت
+                for m_num, days in duration_tiers:
+                    for gb in traffic_tiers:
+                        price = gb * 4000
+                        init_plans.append((
+                            "system_l2tp",
+                            f"اکانت سیستمی {m_num} ماهه ({gb} گیگ) - استاندارد",
+                            float(gb),
+                            days,
+                            price,
+                            1,
+                        ))
+
+                # کانفیگ‌های Sing-box و V2Ray - ۳,۰۰۰ تومان به ازای هر گیگابایت
+                for m_num, days in duration_tiers:
+                    for gb in traffic_tiers:
+                        price = gb * 3000
+                        init_plans.append((
+                            "singbox",
+                            f"پلن {m_num} ماهه Singbox / V2Ray ({gb} گیگابایت)",
+                            float(gb),
+                            days,
+                            price,
+                            1,
+                        ))
+
+                # وایرگارد مدرن (WireGuard) - ۳,۰۰۰ تومان به ازای هر گیگابایت
+                for m_num, days in duration_tiers:
+                    for gb in traffic_tiers:
+                        price = gb * 3000
+                        init_plans.append((
+                            "wireguard",
+                            f"پلن {m_num} ماهه وایرگارد ({gb} گیگابایت)",
+                            float(gb),
+                            days,
+                            price,
+                            1,
+                        ))
+
+                # دسته تانل DNS (SlowDNS)
+                init_plans.extend([
                     ("dnstt", "اشتراک تانل SlowDNS ضد فیلتر (۱ ماهه نامحدود)", 0.0, 30, 75000, 1),
                     ("dnstt", "اشتراک تانل SlowDNS ضد فیلتر (۲ ماهه نامحدود)", 0.0, 60, 130000, 1),
-                ]
+                    ("dnstt", "اشتراک تانل SlowDNS ضد فیلتر (۳ ماهه نامحدود)", 0.0, 90, 180000, 1),
+                ])
+
+                # دسته گوگل اسکریپت (GAS)
+                init_plans.extend([
+                    ("gas", "اشتراک ۱ ماهه اختصاصی گوگل اسکریپت (ترافیک نامحدود)", 0.0, 30, 85000, 1),
+                    ("gas", "اشتراک ۳ ماهه اختصاصی گوگل اسکریپت (ترافیک نامحدود)", 0.0, 90, 220000, 1),
+                ])
+
                 await db.executemany(
                     "INSERT INTO plans (category_key, name, traffic_gb, duration_days, price, is_active) VALUES (?, ?, ?, ?, ?, ?)",
                     init_plans,
@@ -378,12 +466,81 @@ async def delete_category(cat_key: str) -> None:
 #  مدیریت پلن‌ها (Plans Management)
 # ──────────────────────────────────────────────────────────────
 
-async def get_plans_by_category(category_key: str, active_only: bool = True) -> List[Dict[str, Any]]:
+async def get_plans_by_category(category_key: str, active_only: bool = True, duration_days: Optional[int] = None) -> List[Dict[str, Any]]:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cond = "AND is_active = 1" if active_only else ""
-        query = f"SELECT * FROM plans WHERE category_key = ? {cond} ORDER BY price ASC"
-        async with db.execute(query, (category_key,)) as cur:
+        params = [category_key]
+        if duration_days is not None and int(duration_days) > 0:
+            cond += " AND duration_days = ?"
+            params.append(int(duration_days))
+        query = f"SELECT * FROM plans WHERE category_key = ? {cond} ORDER BY duration_days ASC, traffic_gb ASC, price ASC"
+        async with db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_plans_by_duration(duration_days: Optional[int] = None, active_only: bool = False) -> List[Dict[str, Any]]:
+    """دریافت کلیه پلن‌ها بر اساس مدت زمان اعتبار (۱ ماهه ۳۰ روزه، ۲ ماهه ۶۰ روزه، ۳ ماهه ۹۰ روزه)."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cond = "WHERE is_active = 1" if active_only else "WHERE 1=1"
+        params = []
+        if duration_days is not None and int(duration_days) > 0:
+            cond += " AND duration_days = ?"
+            params.append(int(duration_days))
+        query = f"SELECT * FROM plans {cond} ORDER BY duration_days ASC, category_key ASC, traffic_gb ASC"
+        async with db.execute(query, tuple(params)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_distinct_plan_durations(category_key: Optional[str] = None) -> List[int]:
+    """دریافت مدت‌زمان‌های یکتای پلن‌ها (مثلاً [30, 60, 90])."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        if category_key:
+            query = "SELECT DISTINCT duration_days FROM plans WHERE category_key = ? ORDER BY duration_days ASC"
+            params = (category_key,)
+        else:
+            query = "SELECT DISTINCT duration_days FROM plans ORDER BY duration_days ASC"
+            params = ()
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+            return [int(r[0]) for r in rows if r[0]]
+
+
+async def get_plan_durations_summary(active_only: bool = False) -> List[Dict[str, Any]]:
+    """دریافت لیست بازه‌های زمانی پلن‌ها همراه با تعداد پلن در هر بازه."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cond = "WHERE is_active = 1" if active_only else ""
+        query = f"""
+            SELECT duration_days, COUNT(*) as count
+            FROM plans
+            {cond}
+            GROUP BY duration_days
+            ORDER BY duration_days ASC
+        """
+        async with db.execute(query) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_accounts_by_duration_summary() -> List[Dict[str, Any]]:
+    """گزارش آماری کانفیگ‌های کاربران بر اساس مدت زمان (یک ماهه، دو ماهه و...)."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT duration_days,
+                   COUNT(*) as count,
+                   COALESCE(SUM(traffic_gb), 0) as total_traffic,
+                   COALESCE(SUM(price), 0) as total_revenue
+            FROM accounts
+            WHERE is_trial = 0
+            GROUP BY duration_days
+            ORDER BY duration_days ASC
+        """
+        async with db.execute(query) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -407,6 +564,43 @@ async def create_plan(category_key: str, name: str, traffic_gb: float, duration_
         )
         await db.commit()
         return cur.lastrowid
+
+
+async def update_plan(
+    plan_id: int,
+    name: Optional[str] = None,
+    traffic_gb: Optional[float] = None,
+    duration_days: Optional[int] = None,
+    price: Optional[int] = None,
+    is_active: Optional[int] = None,
+) -> bool:
+    fields = []
+    values = []
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name.strip())
+    if traffic_gb is not None:
+        fields.append("traffic_gb = ?")
+        values.append(float(traffic_gb))
+    if duration_days is not None:
+        fields.append("duration_days = ?")
+        values.append(int(duration_days))
+    if price is not None:
+        fields.append("price = ?")
+        values.append(int(price))
+    if is_active is not None:
+        fields.append("is_active = ?")
+        values.append(int(is_active))
+
+    if not fields:
+        return False
+
+    values.append(plan_id)
+    query = f"UPDATE plans SET {', '.join(fields)} WHERE id = ?"
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute(query, tuple(values))
+        await db.commit()
+    return True
 
 
 async def toggle_plan(plan_id: int) -> bool:
@@ -504,6 +698,24 @@ async def get_user(telegram_id: int) -> Optional[Dict[str, Any]]:
             return dict(row) if row else None
 
 
+async def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """یافتن کاربر بر اساس یوزرنیم تلگرام بدون حساسیت به بزرگی و کوچکی حروف."""
+    clean = username.strip().lstrip("@").lower()
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM users WHERE LOWER(username) = ? LIMIT 1", (clean,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def find_user_by_id_or_username(query: str) -> Optional[Dict[str, Any]]:
+    """یافتن کاربر بر اساس شناسه عددی (Telegram ID) یا یوزرنیم."""
+    q = query.strip()
+    if q.isdigit():
+        return await get_user(int(q))
+    return await get_user_by_username(q)
+
+
 async def is_logged_in(telegram_id: int) -> bool:
     user = await get_user(telegram_id)
     return user is not None
@@ -550,15 +762,20 @@ async def save_account(
     is_trial: int = 0,
     traffic_gb: float = 0.0,
     duration_days: int = 0,
+    uuid: str = "",
+    price: int = 0,
+    custom_name: str = "",
+    user_category_id: Optional[int] = None,
 ) -> int:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         cur = await db.execute(
             """
             INSERT INTO accounts (
                 telegram_id, panel_username, panel_password, category, plan_name,
-                sub_token, sub_url, sub_b64_url, server_info, is_trial, traffic_gb, duration_days
+                sub_token, sub_url, sub_b64_url, server_info, is_trial, traffic_gb, duration_days, uuid,
+                price, custom_name, user_category_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 telegram_id,
@@ -573,18 +790,34 @@ async def save_account(
                 is_trial,
                 traffic_gb,
                 duration_days,
+                uuid,
+                price,
+                custom_name.strip() if custom_name else None,
+                user_category_id,
             ),
         )
         await db.commit()
         return cur.lastrowid
 
 
-async def get_user_accounts(telegram_id: int) -> List[Dict[str, Any]]:
+async def get_user_accounts(telegram_id: int, user_category_id: Optional[int] = None) -> List[Dict[str, Any]]:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM accounts WHERE telegram_id = ? ORDER BY id DESC", (telegram_id,)
-        ) as cur:
+        query = """
+            SELECT a.*, uc.name as user_category_name
+            FROM accounts a
+            LEFT JOIN user_categories uc ON a.user_category_id = uc.id
+            WHERE a.telegram_id = ?
+        """
+        params = [telegram_id]
+        if user_category_id is not None:
+            if user_category_id == -1:
+                query += " AND (a.user_category_id IS NULL OR a.user_category_id = 0)"
+            else:
+                query += " AND a.user_category_id = ?"
+                params.append(user_category_id)
+        query += " ORDER BY a.id DESC"
+        async with db.execute(query, tuple(params)) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -592,12 +825,157 @@ async def get_user_accounts(telegram_id: int) -> List[Dict[str, Any]]:
 async def get_account_by_id(account_id: int, telegram_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        query = "SELECT * FROM accounts WHERE id = ?"
+        query = """
+            SELECT a.*, uc.name as user_category_name
+            FROM accounts a
+            LEFT JOIN user_categories uc ON a.user_category_id = uc.id
+            WHERE a.id = ?
+        """
         params = [account_id]
         if telegram_id:
-            query += " AND telegram_id = ?"
+            query += " AND a.telegram_id = ?"
             params.append(telegram_id)
         async with db.execute(query, tuple(params)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def update_account_custom_name(account_id: int, telegram_id: int, custom_name: str) -> bool:
+    """تنظیم یا ویرایش نام دلخواه اکانت توسط کاربر."""
+    clean_val = custom_name.strip() if custom_name else None
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE accounts SET custom_name = ? WHERE id = ? AND telegram_id = ?",
+            (clean_val, account_id, telegram_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def update_account_user_category(account_id: int, telegram_id: int, user_category_id: Optional[int]) -> bool:
+    """تغییر یا اختصاص دسته‌بندی شخصی برای یک اکانت."""
+    cat_val = user_category_id if (user_category_id and user_category_id > 0) else None
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE accounts SET user_category_id = ? WHERE id = ? AND telegram_id = ?",
+            (cat_val, account_id, telegram_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_user_categories(telegram_id: int) -> List[Dict[str, Any]]:
+    """لیست دسته‌بندی‌های شخصی کاربر همراه با تعداد اکانت‌ها."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM accounts a WHERE a.user_category_id = c.id AND a.telegram_id = c.telegram_id) AS accounts_count
+            FROM user_categories c
+            WHERE c.telegram_id = ?
+            ORDER BY c.id ASC
+        """
+        async with db.execute(query, (telegram_id,)) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_user_category(category_id: int, telegram_id: int) -> Optional[Dict[str, Any]]:
+    """مشخصات یک دسته‌بندی شخصی کاربر."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM accounts a WHERE a.user_category_id = c.id AND a.telegram_id = c.telegram_id) AS accounts_count
+            FROM user_categories c
+            WHERE c.id = ? AND c.telegram_id = ?
+            """,
+            (category_id, telegram_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def create_user_category(telegram_id: int, name: str) -> int:
+    """ایجاد یک دسته‌بندی شخصی جدید توسط کاربر."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO user_categories (telegram_id, name) VALUES (?, ?)",
+            (telegram_id, name.strip()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def update_user_category_name(category_id: int, telegram_id: int, name: str) -> bool:
+    """ویرایش نام یک دسته‌بندی شخصی."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE user_categories SET name = ? WHERE id = ? AND telegram_id = ?",
+            (name.strip(), category_id, telegram_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_user_category(category_id: int, telegram_id: int) -> bool:
+    """حذف دسته‌بندی شخصی کاربر و آزادسازی اکانت‌های عضو آن به حالت بدون دسته."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute(
+            "UPDATE accounts SET user_category_id = NULL WHERE user_category_id = ? AND telegram_id = ?",
+            (category_id, telegram_id),
+        )
+        cur = await db.execute(
+            "DELETE FROM user_categories WHERE id = ? AND telegram_id = ?",
+            (category_id, telegram_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_account_by_panel_username(panel_username: str) -> Optional[Dict[str, Any]]:
+    """دریافت اطلاعات اکانت بر اساس نام کاربری در پنل."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM accounts WHERE panel_username = ? LIMIT 1",
+            (panel_username,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def transfer_account(account_id: int, current_owner_id: int, new_owner_id: int) -> bool:
+    """انتقال مالکیت یک اکانت از یک کاربر به کاربر دیگر (هدیه دادن کانفیگ)."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE accounts SET telegram_id = ? WHERE id = ? AND telegram_id = ?",
+            (new_owner_id, account_id, current_owner_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def find_account_in_db(query: str) -> Optional[Dict[str, Any]]:
+    """جستجوی اکانت در دیتابیس محلی با تطبیق شناسه، UUID، ساب‌توکن یا نام کاربری."""
+    clean = query.strip()
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = """
+            SELECT * FROM accounts
+            WHERE panel_username = ?
+               OR sub_token = ?
+               OR uuid = ?
+               OR sub_url LIKE ?
+               OR sub_b64_url LIKE ?
+               OR server_info LIKE ?
+            LIMIT 1
+        """
+        async with db.execute(
+            sql,
+            (clean, clean, clean, f"%{clean}%", f"%{clean}%", f"%{clean}%"),
+        ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
@@ -1060,6 +1438,29 @@ async def update_account_credentials(
         await db.commit()
 
 
+async def update_account_plan(
+    account_id: int,
+    plan_name: str,
+    traffic_gb: float,
+    duration_days: int,
+    price: int,
+) -> None:
+    """بروزرسانی مشخصات پلن (نام، حجم، مدت روزها و قیمت) اکانت در دیتابیس ربات."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute(
+            """
+            UPDATE accounts
+            SET plan_name = ?,
+                traffic_gb = ?,
+                duration_days = ?,
+                price = ?
+            WHERE id = ?
+            """,
+            (plan_name, float(traffic_gb), int(duration_days), int(price), account_id),
+        )
+        await db.commit()
+
+
 async def delete_account(account_id: int) -> None:
     """حذف کامل اکانت از دیتابیس محلی ربات."""
     async with aiosqlite.connect(settings.DB_PATH) as db:
@@ -1085,10 +1486,10 @@ async def search_users(query: str, limit: int = 20) -> List[Dict[str, Any]]:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         if query.isdigit():
-            sql = "SELECT * FROM users WHERE telegram_id = ? OR telegram_id LIKE ? LIMIT ?"
+            sql = "SELECT * FROM users WHERE telegram_id = ? OR telegram_id LIKE ? ORDER BY created_at DESC LIMIT ?"
             params = (int(query), f"%{query}%", limit)
         else:
-            sql = "SELECT * FROM users WHERE username LIKE ? OR first_name LIKE ? ORDER BY id DESC LIMIT ?"
+            sql = "SELECT * FROM users WHERE username LIKE ? OR first_name LIKE ? ORDER BY created_at DESC, telegram_id DESC LIMIT ?"
             params = (f"%{query}%", f"%{query}%", limit)
 
         async with db.execute(sql, params) as cur:
@@ -1100,7 +1501,7 @@ async def get_recent_users(limit: int = 20) -> List[Dict[str, Any]]:
     """دریافت آخرین کاربران ثبت‌نام شده در ربات."""
     async with aiosqlite.connect(settings.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users ORDER BY id DESC LIMIT ?", (limit,)) as cur:
+        async with db.execute("SELECT * FROM users ORDER BY created_at DESC, telegram_id DESC LIMIT ?", (limit,)) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
@@ -1131,4 +1532,254 @@ async def reset_user_trial(telegram_id: int) -> None:
     async with aiosqlite.connect(settings.DB_PATH) as db:
         await db.execute("UPDATE users SET trial_used = 0 WHERE telegram_id = ?", (telegram_id,))
         await db.commit()
+
+
+# ──────────────────────────────────────────────────────────────
+#  مدیریت عضویت اجباری (Force Join Channels)
+# ──────────────────────────────────────────────────────────────
+
+async def is_force_join_enabled() -> bool:
+    """بررسی فعال بودن قفل عضویت اجباری در ربات."""
+    val = await get_setting("force_join_enabled", "0")
+    return val == "1"
+
+
+async def set_force_join_enabled(enabled: bool) -> None:
+    """فعال یا غیرفعال کردن سراسری عضویت اجباری."""
+    await set_setting("force_join_enabled", "1" if enabled else "0")
+
+
+async def get_force_join_channels(active_only: bool = False) -> List[Dict[str, Any]]:
+    """دریافت لیست کانال‌های عضویت اجباری."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = "SELECT * FROM force_join_channels"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY id ASC"
+        async with db.execute(sql) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_force_join_channel(channel_id: int) -> Optional[Dict[str, Any]]:
+    """دریافت یک کانال عضویت اجباری بر اساس شناسه دیتابیس."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM force_join_channels WHERE id = ?", (channel_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def add_force_join_channel(title: str, channel_id: str, invite_link: str = "") -> int:
+    """افزودن کانال جدید برای عضویت اجباری."""
+    clean_id = channel_id.strip()
+    if not clean_id.startswith("@") and not clean_id.startswith("-100") and clean_id.lstrip("-").isdigit():
+        clean_id = f"-100{clean_id.lstrip('-')}"
+    
+    clean_link = invite_link.strip()
+    if not clean_link and clean_id.startswith("@"):
+        clean_link = f"https://t.me/{clean_id.lstrip('@')}"
+
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO force_join_channels (title, channel_id, invite_link, is_active) VALUES (?, ?, ?, 1)",
+            (title.strip(), clean_id, clean_link),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def delete_force_join_channel(channel_id: int) -> bool:
+    """حذف کانال عضویت اجباری."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute("DELETE FROM force_join_channels WHERE id = ?", (channel_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def toggle_force_join_channel(channel_id: int) -> bool:
+    """تغییر وضعیت فعال/غیرفعال کانال عضویت اجباری."""
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE force_join_channels SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?",
+            (channel_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ──────────────────────────────────────────────────────────────
+#  مدیریت قفل سین / بازدید پست (Seen Lock)
+# ──────────────────────────────────────────────────────────────
+
+async def is_seen_lock_enabled() -> bool:
+    """بررسی فعال بودن قفل سین پست."""
+    val = await get_setting("seen_lock_enabled", "0")
+    return val == "1"
+
+
+async def set_seen_lock_enabled(enabled: bool) -> None:
+    """تغییر فعال بودن قفل سین."""
+    await set_setting("seen_lock_enabled", "1" if enabled else "0")
+
+
+async def get_seen_lock_settings() -> Dict[str, Any]:
+    """دریافت تنظیمات فعلی قفل سین."""
+    return {
+        "is_enabled": await is_seen_lock_enabled(),
+        "post_url": await get_setting("seen_lock_post_url", ""),
+        "lock_text": await get_setting(
+            "seen_lock_text",
+            "جهت استفاده از خدمات ربات، لطفاً از پست اسپانسر دیدن کرده و دکمه تایید مشاهده را لمس نمایید.",
+        ),
+    }
+
+
+async def set_seen_lock_settings(
+    post_url: Optional[str] = None,
+    lock_text: Optional[str] = None,
+    enabled: Optional[bool] = None,
+) -> None:
+    """بروزرسانی مشخصات قفل سین."""
+    if enabled is not None:
+        await set_seen_lock_enabled(enabled)
+    if post_url is not None:
+        await set_setting("seen_lock_post_url", post_url.strip())
+    if lock_text is not None:
+        await set_setting("seen_lock_text", lock_text.strip())
+
+
+async def has_user_seen(telegram_id: int, post_url: str) -> bool:
+    """بررسی اینکه آیا کاربر پست مورد نظر را مشاهده و تایید کرده است یا خیر."""
+    if not post_url:
+        return True
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM user_seen_locks WHERE telegram_id = ? AND post_url = ? LIMIT 1",
+            (telegram_id, post_url),
+        ) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
+
+async def record_user_seen(telegram_id: int, post_url: str) -> None:
+    """ثبت مشاهده و سین پست توسط کاربر."""
+    if not post_url:
+        return
+    async with aiosqlite.connect(settings.DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO user_seen_locks (telegram_id, post_url) VALUES (?, ?)",
+            (telegram_id, post_url),
+        )
+        await db.commit()
+
+
+# ──────────────────────────────────────────────────────────────
+#  ارسال خودکار کانفیگ به کانال مقصد (Auto Config to Channel)
+# ──────────────────────────────────────────────────────────────
+
+async def get_auto_channel_settings() -> Dict[str, Any]:
+    """دریافت تمامی تنظیمات ارسال خودکار کانفیگ به کانال."""
+    raw_enabled = await get_setting("auto_channel_enabled", "0")
+    channel_id = await get_setting("auto_channel_id", "")
+    days_str = await get_setting("auto_channel_days", "sat,sun,mon,tue,wed,thu,fri")
+    times_str = await get_setting("auto_channel_times", "12:00,20:00")
+    traffic_gb = float(await get_setting("auto_channel_traffic_gb", "1.0") or 1.0)
+    duration_days = int(await get_setting("auto_channel_duration_days", "1") or 1)
+    protocol = await get_setting("auto_channel_protocol", "singbox")
+    send_qr = (await get_setting("auto_channel_send_qr", "1")) == "1"
+    caption = await get_setting("auto_channel_caption", "")
+    last_sent = await get_setting("auto_channel_last_sent", "")
+
+    # لیست روزها و ساعت‌ها
+    days_list = [d.strip().lower() for d in days_str.split(",") if d.strip()]
+    times_list = [t.strip() for t in times_str.split(",") if t.strip()]
+
+    return {
+        "is_enabled": raw_enabled == "1",
+        "channel_id": channel_id,
+        "days_list": days_list,
+        "days_str": days_str,
+        "times_list": times_list,
+        "times_str": times_str,
+        "traffic_gb": traffic_gb,
+        "duration_days": duration_days,
+        "protocol": protocol,
+        "send_qr": send_qr,
+        "caption": caption,
+        "last_sent": last_sent,
+    }
+
+
+async def set_auto_channel_setting(key: str, value: str) -> None:
+    """تنظیم یک فیلد مربوط به ارسال خودکار کانال."""
+    await set_setting(f"auto_channel_{key}", value)
+
+
+async def toggle_auto_channel() -> bool:
+    """تغییر وضعیت فعال/غیرفعال ارسال خودکار کانفیگ به کانال."""
+    cur = await get_setting("auto_channel_enabled", "0")
+    new_val = "1" if cur != "1" else "0"
+    await set_setting("auto_channel_enabled", new_val)
+    return new_val == "1"
+
+
+async def toggle_auto_channel_qr() -> bool:
+    """تغییر وضعیت ارسال QR Code در کانال."""
+    cur = await get_setting("auto_channel_send_qr", "1")
+    new_val = "1" if cur != "1" else "0"
+    await set_setting("auto_channel_send_qr", new_val)
+    return new_val == "1"
+
+
+async def toggle_auto_channel_day(day_code: str) -> str:
+    """تغییر فعال بودن یک روز خاص از هفته برای ارسال کانفیگ."""
+    day_code = day_code.strip().lower()
+    days_str = await get_setting("auto_channel_days", "sat,sun,mon,tue,wed,thu,fri")
+    days_list = [d.strip().lower() for d in days_str.split(",") if d.strip()]
+    if day_code in days_list:
+        days_list.remove(day_code)
+    else:
+        days_list.append(day_code)
+    new_days_str = ",".join(days_list)
+    await set_setting("auto_channel_days", new_days_str)
+    return new_days_str
+
+
+async def set_auto_channel_times(times_str: str) -> None:
+    """تنظیم ساعات ارسال خودکار کانفیگ."""
+    # استانداردسازی و تمیز کردن ورودی‌ها
+    parts = [t.strip() for t in times_str.replace("،", ",").split(",") if t.strip()]
+    valid_times = []
+    for p in parts:
+        if ":" in p:
+            sub = p.split(":")
+            if len(sub) == 2 and sub[0].isdigit() and sub[1].isdigit():
+                h = int(sub[0])
+                m = int(sub[1])
+                if 0 <= h <= 23 and 0 <= m <= 59:
+                    valid_times.append(f"{h:02d}:{m:02d}")
+    valid_times = sorted(list(set(valid_times)))
+    await set_setting("auto_channel_times", ",".join(valid_times))
+
+
+async def set_auto_channel_target(channel_id: str) -> None:
+    """تنظیم کانال مقصد ارسال خودکار."""
+    clean = channel_id.strip()
+    if clean and not clean.startswith("@") and not clean.startswith("-100") and clean.lstrip("-").isdigit():
+        clean = f"-100{clean.lstrip('-')}"
+    await set_setting("auto_channel_id", clean)
+
+
+async def set_auto_channel_specs(traffic_gb: float, duration_days: int) -> None:
+    """تنظیم حجم و مدت زمان اعتبار کانفیگ‌های ارسالی به کانال."""
+    await set_setting("auto_channel_traffic_gb", str(traffic_gb))
+    await set_setting("auto_channel_duration_days", str(duration_days))
+
+
+async def set_auto_channel_last_sent(timestamp_str: str) -> None:
+    """ثبت آخرین برچسب زمانی ارسال شده جهت جلوگیری از ارسال تکراری."""
+    await set_setting("auto_channel_last_sent", timestamp_str)
+
 

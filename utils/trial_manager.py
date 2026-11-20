@@ -20,7 +20,7 @@ from api import panel_api
 from config import settings
 from db import database
 from utils.cert_manager import get_ovpn_content
-from utils.helpers import to_fa, api_error_text
+from utils.helpers import to_fa, api_error_text, sanitize_wireguard_conf
 
 logger = logging.getLogger("MS_VPN_BOT.trial_manager")
 
@@ -112,7 +112,7 @@ async def issue_trial_system_l2tp(telegram_id: int, trial_gb: float, trial_days:
 async def issue_trial_wireguard(telegram_id: int, trial_gb: float, trial_days: int) -> Dict[str, Any]:
     """ساخت اکانت تستی اختصاصی وایرگارد (WireGuard)."""
     rand_suffix = secrets.token_hex(2)
-    panel_user = f"ms_t_wg_{telegram_id}_{rand_suffix}"
+    panel_user = f"wg_t_{telegram_id % 100000}_{rand_suffix}"
 
     res = await panel_api.create_wireguard_account(
         name=panel_user,
@@ -122,7 +122,7 @@ async def issue_trial_wireguard(telegram_id: int, trial_gb: float, trial_days: i
     if not res.get("success"):
         return {"success": False, "error": api_error_text(res)}
 
-    client_conf = res.get("config", "")
+    client_conf = sanitize_wireguard_conf(res.get("config", ""))
     client_ip = res.get("ip", "")
     pubkey = res.get("public_key", "")
     sub_token = res.get("sub_token", "")
@@ -144,6 +144,48 @@ async def issue_trial_wireguard(telegram_id: int, trial_gb: float, trial_days: i
         "success": True,
         "account_id": acc_id,
         "category": "wireguard",
+        "username": panel_user,
+        "public_key": pubkey,
+        "client_ip": client_ip,
+        "config": client_conf,
+    }
+
+
+async def issue_trial_amneziawg(telegram_id: int, trial_gb: float, trial_days: int) -> Dict[str, Any]:
+    """ساخت اکانت تستی اختصاصی وایرگارد پیشرفته ضد فیلتر (AmneziaWG)."""
+    rand_suffix = secrets.token_hex(2)
+    panel_user = f"awg_t_{telegram_id % 100000}_{rand_suffix}"
+
+    res = await panel_api.create_amneziawg_account(
+        name=panel_user,
+        traffic_limit_gb=trial_gb,
+        validity_days=trial_days,
+    )
+    if not res.get("success"):
+        return {"success": False, "error": api_error_text(res)}
+
+    client_conf = sanitize_wireguard_conf(res.get("config", ""))
+    client_ip = res.get("ip", "")
+    pubkey = res.get("public_key", "")
+    sub_token = res.get("sub_token", "")
+
+    acc_id = await database.save_account(
+        telegram_id=telegram_id,
+        panel_username=panel_user,
+        panel_password=pubkey,
+        category="amneziawg",
+        plan_name="اکانت تستی وایرگارد پیشرفته (AmneziaWG)",
+        server_info=client_conf,
+        sub_token=sub_token,
+        is_trial=1,
+        traffic_gb=trial_gb,
+        duration_days=trial_days,
+    )
+
+    return {
+        "success": True,
+        "account_id": acc_id,
+        "category": "amneziawg",
         "username": panel_user,
         "public_key": pubkey,
         "client_ip": client_ip,
@@ -196,7 +238,9 @@ async def issue_trial_dnstt(telegram_id: int, trial_gb: float, trial_days: int) 
 
 async def issue_trial_by_mode(telegram_id: int, mode: str, trial_gb: float, trial_days: int) -> Dict[str, Any]:
     """صدور اکانت تستی بر اساس حالت انتخابی (یا صدور یکپارچه تمام حالت‌ها)."""
-    if mode == "singbox":
+    if mode == "amneziawg":
+        return await issue_trial_amneziawg(telegram_id, trial_gb, trial_days)
+    elif mode == "singbox":
         return await issue_trial_singbox(telegram_id, trial_gb, trial_days)
     elif mode == "system_l2tp":
         return await issue_trial_system_l2tp(telegram_id, trial_gb, trial_days)
@@ -205,15 +249,17 @@ async def issue_trial_by_mode(telegram_id: int, mode: str, trial_gb: float, tria
     elif mode == "dnstt":
         return await issue_trial_dnstt(telegram_id, trial_gb, trial_days)
     elif mode == "all":
-        # صدور پکیج کامل از تمام ۴ حالت
+        # صدور پکیج کامل از تمام ۵ حالت
+        awg_res = await issue_trial_amneziawg(telegram_id, trial_gb, trial_days)
         sb_res = await issue_trial_singbox(telegram_id, trial_gb, trial_days, note_suffix="All-in-One")
         sys_res = await issue_trial_system_l2tp(telegram_id, trial_gb, trial_days)
         wg_res = await issue_trial_wireguard(telegram_id, trial_gb, trial_days)
         dns_res = await issue_trial_dnstt(telegram_id, trial_gb, trial_days)
 
         results = {
-            "success": any([sb_res.get("success"), sys_res.get("success"), wg_res.get("success"), dns_res.get("success")]),
+            "success": any([awg_res.get("success"), sb_res.get("success"), sys_res.get("success"), wg_res.get("success"), dns_res.get("success")]),
             "category": "all",
+            "amneziawg": awg_res,
             "singbox": sb_res,
             "system_l2tp": sys_res,
             "wireguard": wg_res,
@@ -239,10 +285,17 @@ async def delete_trial_from_panel(account: Dict[str, Any]) -> bool:
             pubkey = account.get("panel_password", "")
             r = await panel_api.delete_wireguard_account(pubkey)
             return r.get("success", False)
+        elif cat == "amneziawg":
+            pubkey = account.get("panel_password", "")
+            r = await panel_api.delete_amneziawg_account(pubkey)
+            return r.get("success", False)
     except Exception as e:
         logger.error(f"خطا در حذف اکانت {uname} ({cat}) از پنل: {e}")
         return False
     return False
+
+
+delete_account_from_panel = delete_trial_from_panel
 
 
 async def check_and_cleanup_expired_trials(bot: Optional[Bot] = None) -> int:

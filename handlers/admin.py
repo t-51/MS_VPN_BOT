@@ -38,6 +38,7 @@ from keyboards.inline import (
     admin_category_proto_select_keyboard,
     admin_plans_list_keyboard,
     admin_plan_detail_keyboard,
+    admin_plan_edit_keyboard,
     admin_bank_cards_list_keyboard,
     admin_bank_card_detail_keyboard,
     admin_broadcast_confirm_keyboard,
@@ -72,6 +73,7 @@ from states.forms import (
     AdminActionStates,
     AdminCategoryStates,
     AdminPlanStates,
+    AdminPlanEditStates,
     AdminBroadcastStates,
     AdminCardStates,
     AdminUserStates,
@@ -546,17 +548,110 @@ async def state_cat_desc(message: types.Message, state: FSMContext):
 # ── مدیریت پلن‌های یک دسته‌بندی ──
 @router.callback_query(F.data.startswith("adm:plans_list:"))
 async def cb_admin_plans_list(callback: types.CallbackQuery):
-    cat_key = callback.data.split(":")[2]
-    cat = await database.get_category_by_key(cat_key)
-    plans = await database.get_plans_by_category(cat_key, active_only=False)
+    parts = callback.data.split(":")
+    cat_key = parts[2]
+    dur_filter = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
 
+    cat = await database.get_category_by_key(cat_key)
+    plans = await database.get_plans_by_category(cat_key, active_only=False, duration_days=dur_filter if dur_filter > 0 else None)
+
+    dur_txt = f" (فیلتر: {to_days(dur_filter)})" if dur_filter > 0 else ""
     text = (
-        f"📋 <b>لیست پلن‌های دسته‌بندی {cat.get('title', cat_key)}</b>\n"
+        f"📋 <b>لیست پلن‌های دسته‌بندی {cat.get('title', cat_key)}{dur_txt}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"تعداد پلن‌ها: <b>{to_fa(len(plans))} پلن</b>\n\n"
-        "جهت مشاهده، ویرایش یا حذف، روی پلن مورد نظر بزنید یا پلن جدید بسازید:"
+        "جهت مشاهده، ویرایش یا حذف، روی پلن مورد نظر بزنید یا فیلتر زمان را از ردیف بالا انتخاب فرمایید:"
     )
-    await callback.message.edit_text(text, reply_markup=admin_plans_list_keyboard(plans, cat_key), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=admin_plans_list_keyboard(plans, cat_key, selected_dur=dur_filter), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: types.CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:plans_by_dur:"))
+async def cb_admin_plans_by_duration(callback: types.CallbackQuery):
+    """مدیریت و دسته‌بندی پلن‌های کلی فروشگاه بر اساس مدت زمان (۱ ماهه، ۲ ماهه، ۳ ماهه)."""
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    parts = callback.data.split(":")
+    dur = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1
+
+    from keyboards.inline import admin_plans_duration_menu_keyboard, admin_plans_by_duration_keyboard
+    from utils.helpers import duration_label
+
+    if dur == 0:
+        summaries = await database.get_plan_durations_summary(active_only=False)
+        total_plans = sum(s.get("count", 0) for s in summaries)
+        text = (
+            "⏳ <b>دسته‌بندی و مدیریت پلن‌ها بر اساس مدت زمان اعتبار</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 مجموع کل پلن‌های ثبت‌شده: <b>{to_fa(total_plans)} پلن</b>\n\n"
+            "جهت مشاهده، ویرایش و مدیریت وضعیت پلن‌ها، لطفاً بازه زمانی مورد نظر را انتخاب فرمایید:"
+        )
+        await callback.message.edit_text(text, reply_markup=admin_plans_duration_menu_keyboard(summaries), parse_mode="HTML")
+        return await callback.answer()
+
+    plans = await database.get_plans_by_duration(duration_days=dur, active_only=False)
+    all_durs = await database.get_distinct_plan_durations()
+    dur_label_txt = duration_label(dur)
+    text = (
+        f"⏳ <b>پلن‌های فروشگاه — مدت اعتبار {dur_label_txt}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"تعداد پلن‌ها در این بازه: <b>{to_fa(len(plans))} پلن</b>\n\n"
+        "👇 برای مشاهده یا ویرایش مشخصات هر پلن، روی آن کلیک کنید:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_plans_by_duration_keyboard(plans, selected_dur=dur, page=page, per_page=10, all_durs=all_durs),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adm:accs_by_dur")
+async def cb_admin_accounts_by_duration(callback: types.CallbackQuery):
+    """گزارش تفکیک کانفیگ‌های کاربران بر اساس زمان (یک ماهه، دو ماهه و...)."""
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+
+    summary = await database.get_accounts_by_duration_summary()
+    total_accs = sum(item.get("count", 0) for item in summary)
+    total_revenue = sum(item.get("total_revenue", 0) for item in summary)
+
+    lines = [
+        "📊 <b>تفکیک و آمار کانفیگ‌های کاربران بر اساس مدت زمان</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"▫️ کل اشتراک‌های فعال غیرتستی: <b>{to_fa(total_accs)} اکانت</b>",
+        f"▫️ مجموع ارزش ریالی اشتراک‌ها: <b>{to_toman(total_revenue)}</b>\n",
+        "<b>تفکیک بر اساس زمان اعتبار:</b>",
+    ]
+    if not summary:
+        lines.append("📭 هیچ اکانت فعالی در دیتابیس ثبت نشده است.")
+    else:
+        for s in summary:
+            days = s.get("duration_days", 0)
+            d_label = f"{days // 30} ماهه ({days} روز)" if days % 30 == 0 else f"{days} روزه"
+            cnt = s.get("count", 0)
+            traffic = s.get("total_traffic", 0)
+            rev = s.get("total_revenue", 0)
+            lines.append(
+                f"🔹 <b>کانفیگ‌های {to_fa(d_label)}:</b>\n"
+                f"   ▫️ تعداد اکانت‌ها: <b>{to_fa(cnt)} عدد</b>\n"
+                f"   ▫️ حجم ترافیک اختصاصی: <b>{to_fa(traffic)} گیگابایت</b>\n"
+                f"   ▫️ مجموع فروش: <b>{to_toman(rev)}</b>\n"
+            )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⏳ مشاهده و ویرایش پلن‌ها بر اساس زمان", callback_data="adm:plans_by_dur:0")
+    kb.button(text="🔙 بازگشت به دسته‌بندی‌ها", callback_data="adm:categories")
+    kb.adjust(1)
+
+    await callback.message.edit_text("\n".join(lines), reply_markup=kb.as_markup(), parse_mode="HTML")
     await callback.answer()
 
 
@@ -698,6 +793,191 @@ async def state_plan_price(message: types.Message, state: FSMContext):
         f"💰 قیمت: <b>{to_toman(price)}</b>\n\n"
         "این پلن بلافاصله در فروشگاه برای کاربران قابل خریداری است.",
         reply_markup=get_main_keyboard(True),
+        parse_mode="HTML",
+    )
+
+
+# ── ویرایش مشخصات پلن (FSM) ──
+@router.callback_query(F.data.startswith("adm:plan_edit_field:"))
+async def cb_admin_plan_edit_field(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    parts = callback.data.split(":")
+    plan_id = int(parts[2])
+    field = parts[3]
+    plan = await database.get_plan_by_id(plan_id)
+    if not plan:
+        return await callback.answer("پلن یافت نشد.", show_alert=True)
+
+    await state.update_data(plan_id=plan_id, cat_key=plan.get("category_key"))
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    cancel_kb = InlineKeyboardBuilder()
+    cancel_kb.button(text="❌ انصراف و بازگشت", callback_data=f"adm:plan_edit:{plan_id}")
+
+    if field == "name":
+        await state.set_state(AdminPlanEditStates.waiting_name)
+        text = (
+            f"🏷 <b>ویرایش عنوان پلن #{plan_id}</b>\n\n"
+            f"عنوان فعلی: <code>{plan.get('name')}</code>\n\n"
+            "لطفاً <b>عنوان جدید پلن</b> را ارسال فرمایید:"
+        )
+    elif field == "traffic":
+        await state.set_state(AdminPlanEditStates.waiting_traffic)
+        text = (
+            f"📶 <b>ویرایش سقف ترافیک پلن #{plan_id}</b>\n\n"
+            f"حجم فعلی: <b>{plan.get('traffic_gb')} گیگابایت</b>\n\n"
+            "لطفاً <b>سقف حجم جدید (به گیگابایت)</b> را به عدد وارد فرمایید:\n"
+            "(برای نامحدود عدد 0 را ارسال کنید)"
+        )
+    elif field == "days":
+        await state.set_state(AdminPlanEditStates.waiting_days)
+        text = (
+            f"⏱ <b>ویرایش مدت اعتبار پلن #{plan_id}</b>\n\n"
+            f"مدت فعلی: <b>{plan.get('duration_days')} روز</b>\n\n"
+            "لطفاً <b>مدت اعتبار جدید (به تعداد روز)</b> را وارد فرمایید:"
+        )
+    elif field == "price":
+        await state.set_state(AdminPlanEditStates.waiting_price)
+        text = (
+            f"💰 <b>ویرایش مبلغ پلن #{plan_id}</b>\n\n"
+            f"قیمت فعلی: <b>{to_toman(plan.get('price'))}</b>\n\n"
+            "لطفاً <b>قیمت فروش جدید (به تومان)</b> را به عدد ارسال فرمایید:"
+        )
+    else:
+        return await callback.answer("بخش نامعتبر است.", show_alert=True)
+
+    await callback.message.edit_text(text, reply_markup=cancel_kb.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:plan_edit:"))
+async def cb_admin_plan_edit_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        return await callback.answer("دسترسی غیرمجاز", show_alert=True)
+    await state.clear()
+    plan_id = int(callback.data.split(":")[2])
+    plan = await database.get_plan_by_id(plan_id)
+    if not plan:
+        return await callback.answer("پلن یافت نشد.", show_alert=True)
+
+    traffic_desc = f"{to_fa(plan.get('traffic_gb'))} گیگابایت" if plan.get('traffic_gb') > 0 else "نامحدود"
+    text = (
+        f"✏️ <b>ویرایش مشخصات پلن #{plan_id}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"▫️ عنوان فعلی: <b>{plan.get('name')}</b>\n"
+        f"▫️ حجم فعلی: <b>{traffic_desc}</b>\n"
+        f"▫️ مدت اعتبار فعلی: <b>{to_fa(plan.get('duration_days'))} روز</b>\n"
+        f"▫️ قیمت فعلی: <b>{to_toman(plan.get('price'))}</b>\n\n"
+        "لطفاً مشخصه‌ای که مایل به تغییر آن هستید را انتخاب نمایید:"
+    )
+    await callback.message.edit_text(text, reply_markup=admin_plan_edit_keyboard(plan_id), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(AdminPlanEditStates.waiting_name)
+async def state_plan_edit_name(message: types.Message, state: FSMContext):
+    if message.text in ("❌ انصراف", "❌ لغو", "/cancel"):
+        await state.clear()
+        return await message.answer("عملیات ویرایش لغو شد.", reply_markup=get_main_keyboard(True))
+
+    new_name = message.text.strip()
+    if not new_name:
+        return await message.answer("❌ عنوان پلن نمی‌تواند خالی باشد. لطفاً مجدداً ارسال فرمایید:")
+
+    data = await state.get_data()
+    plan_id = data.get("plan_id")
+    await database.update_plan(plan_id, name=new_name)
+    await state.clear()
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 مشاهده پلن", callback_data=f"adm:plan_view:{plan_id}")
+    await message.answer(
+        f"✅ عنوان پلن با موفقیت به <b>{new_name}</b> بروزرسانی شد.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminPlanEditStates.waiting_traffic)
+async def state_plan_edit_traffic(message: types.Message, state: FSMContext):
+    if message.text in ("❌ انصراف", "❌ لغو", "/cancel"):
+        await state.clear()
+        return await message.answer("عملیات ویرایش لغو شد.", reply_markup=get_main_keyboard(True))
+
+    raw = message.text.strip().replace("/", ".")
+    try:
+        gb = float(raw)
+        if gb < 0:
+            raise ValueError
+    except ValueError:
+        return await message.answer("❌ لطفاً یک عدد معتبر (۰ یا مثبت) برای گیگابایت وارد فرمایید:")
+
+    data = await state.get_data()
+    plan_id = data.get("plan_id")
+    await database.update_plan(plan_id, traffic_gb=gb)
+    await state.clear()
+
+    traffic_desc = f"{to_fa(gb)} گیگابایت" if gb > 0 else "نامحدود"
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 مشاهده پلن", callback_data=f"adm:plan_view:{plan_id}")
+    await message.answer(
+        f"✅ سقف ترافیک پلن با موفقیت به <b>{traffic_desc}</b> تغییر یافت.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminPlanEditStates.waiting_days)
+async def state_plan_edit_days(message: types.Message, state: FSMContext):
+    if message.text in ("❌ انصراف", "❌ لغو", "/cancel"):
+        await state.clear()
+        return await message.answer("عملیات ویرایش لغو شد.", reply_markup=get_main_keyboard(True))
+
+    raw = message.text.strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        return await message.answer("❌ لطفاً یک عدد صحیح مثبت برای روزها وارد نمایید:")
+
+    days = int(raw)
+    data = await state.get_data()
+    plan_id = data.get("plan_id")
+    await database.update_plan(plan_id, duration_days=days)
+    await state.clear()
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 مشاهده پلن", callback_data=f"adm:plan_view:{plan_id}")
+    await message.answer(
+        f"✅ مدت اعتبار پلن با موفقیت به <b>{to_fa(days)} روز</b> تغییر یافت.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminPlanEditStates.waiting_price)
+async def state_plan_edit_price(message: types.Message, state: FSMContext):
+    if message.text in ("❌ انصراف", "❌ لغو", "/cancel"):
+        await state.clear()
+        return await message.answer("عملیات ویرایش لغو شد.", reply_markup=get_main_keyboard(True))
+
+    raw = message.text.strip().replace(",", "").replace("،", "")
+    if not raw.isdigit() or int(raw) < 0:
+        return await message.answer("❌ لطفاً مبلغ معتبر (به عدد) ارسال فرمایید:")
+
+    price = int(raw)
+    data = await state.get_data()
+    plan_id = data.get("plan_id")
+    await database.update_plan(plan_id, price=price)
+    await state.clear()
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 مشاهده پلن", callback_data=f"adm:plan_view:{plan_id}")
+    await message.answer(
+        f"✅ قیمت فروش پلن با موفقیت به <b>{to_toman(price)}</b> تغییر یافت.",
+        reply_markup=kb.as_markup(),
         parse_mode="HTML",
     )
 
@@ -1511,8 +1791,9 @@ async def cb_admin_users_recent(callback: types.CallbackQuery):
     kb = InlineKeyboardBuilder()
     for u in users:
         uname = f"@{u.get('username')}" if u.get("username") else str(u.get("telegram_id"))
+        f_name = (u.get("first_name") or "کاربر")[:15]
         kb.button(
-            text=f"👤 {u.get('first_name', 'کاربر')[:15]} ({uname})",
+            text=f"👤 {f_name} ({uname})",
             callback_data=f"adm:u_view:{u.get('telegram_id')}",
         )
     kb.button(text="🔙 بازگشت به منوی کاربران", callback_data="adm:users_menu")
